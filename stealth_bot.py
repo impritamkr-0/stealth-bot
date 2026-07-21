@@ -12,6 +12,7 @@ import re
 import requests
 from fake_useragent import UserAgent
 import subprocess
+import sys
 
 def get_chrome_major_version():
     """Automatically detects the installed Chrome major version on Linux."""
@@ -31,7 +32,7 @@ def human_like_type(element, text, min_delay=0.1, max_delay=0.3):
         element.send_keys(char)
         time.sleep(random.uniform(min_delay, max_delay))
 
-# --- MAIL.TM API FUNCTIONS (FIXED PARSING) ---
+# --- MAIL.TM API FUNCTIONS ---
 API_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "application/json"
@@ -42,7 +43,6 @@ def create_mail_tm_account():
     res = requests.get("https://api.mail.tm/domains", headers=API_HEADERS)
     data = res.json()
 
-    # FIX: Safely extract the domain whether the API returns a list or a dict
     if isinstance(data, list):
         domain = data[0]['domain']
     else:
@@ -68,7 +68,6 @@ def check_mail_tm_inbox(token):
     res = requests.get("https://api.mail.tm/messages", headers=headers)
     data = res.json()
 
-    # FIX: Safely return inbox messages whether it's a list or dict
     if isinstance(data, list):
         return data
     return data.get('hydra:member', [])
@@ -79,11 +78,6 @@ def fetch_mail_tm_message(token, msg_id):
     headers["Authorization"] = f"Bearer {token}"
     res = requests.get(f"https://api.mail.tm/messages/{msg_id}", headers=headers)
     return res.json()
-
-def generate_random_password(length=12):
-    """Generate a random password with letters, digits, and special characters"""
-    chars = string.ascii_letters + string.digits + "!@#$%^&*()"
-    return ''.join(random.choice(chars) for _ in range(length))
 
 def run_stealth_automation():
     print("Spinning up the Xvfb Ghost Monitor...")
@@ -134,9 +128,9 @@ def run_stealth_automation():
         # 1. Click on Register link
         print("Looking for Register link...")
         register_link = WebDriverWait(driver, 15).until(
-            EC.presence_of_element_located((By.XPATH, "//*[contains(text(), 'Register') or contains(text(), 'register')]"))
+            EC.element_to_be_clickable((By.XPATH, "//*[contains(text(), 'Register') or contains(text(), 'register')]"))
         )
-        driver.execute_script("arguments[0].click();", register_link)
+        ActionChains(driver).move_to_element(register_link).click().perform()
         human_like_delay(2, 3)
 
         # 2. Enter email address
@@ -149,14 +143,14 @@ def run_stealth_automation():
 
         # 3. Click Next Step
         print("Clicking Next Step after email...")
-        next_button = WebDriverWait(driver, 15).until(
-            EC.presence_of_element_located((By.XPATH, "//*[contains(text(), 'Next Step') or contains(text(), 'next step')]"))
+        next_button_1 = WebDriverWait(driver, 15).until(
+            EC.element_to_be_clickable((By.XPATH, "//*[contains(text(), 'Next Step') or contains(text(), 'next step')]"))
         )
-        driver.execute_script("arguments[0].click();", next_button)
+        ActionChains(driver).move_to_element(next_button_1).click().perform()
         human_like_delay(2, 3)
 
-        # 4. Generate and enter password
-        password = generate_random_password()
+        # 4. Generate and enter strong password
+        password = "StealthP@ssword123!"
         print("Setting password...")
         password_field = WebDriverWait(driver, 15).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='password']"))
@@ -170,19 +164,27 @@ def run_stealth_automation():
         human_like_type(confirm_password_field, password)
         human_like_delay(1, 2)
 
-        # 6. Click Next Step after password
-        print("Clicking Next Step after password...")
-        next_button = WebDriverWait(driver, 15).until(
-            EC.presence_of_element_located((By.XPATH, "//*[contains(text(), 'Next Step') or contains(text(), 'next step')]"))
-        )
-        driver.execute_script("arguments[0].click();", next_button)
+        # 6. SUBMIT PASSWORD FORM NATIVELY (ENTER KEY + ACTION CHAINS)
+        print("Submitting password form...")
+        confirm_password_field.send_keys(Keys.ENTER)
         human_like_delay(2, 3)
+
+        # Fallback click if ENTER key didn't close modal
+        try:
+            next_button_2 = driver.find_element(By.XPATH, "//button[contains(., 'Next Step') or contains(., 'Next')]")
+            if next_button_2.is_displayed():
+                print("Clicking Next Step via ActionChains fallback...")
+                ActionChains(driver).move_to_element(next_button_2).click().perform()
+        except Exception:
+            pass
+
+        human_like_delay(3, 5)
 
         # --- WAIT FOR VERIFICATION CODE VIA API (POLLING) ---
         print("Polling API every 5 seconds waiting for the verification email to arrive...")
         verification_code = None
 
-        for _ in range(12):  # Try for 1 minute (12 * 5 seconds)
+        for _ in range(12):  # Try for 1 minute
             time.sleep(5)
             inbox = check_mail_tm_inbox(api_token)
 
@@ -192,7 +194,6 @@ def run_stealth_automation():
                 email_data = fetch_mail_tm_message(api_token, msg_id)
                 email_body = email_data.get('text', '') or email_data.get('html', '')
 
-                # Look for verification code (trying multiple patterns)
                 code_match = re.search(r'\b\d{4,6}\b', email_body)
                 if not code_match:
                     code_match = re.search(r'code:\s*(\d{4,6})', email_body, re.IGNORECASE)
@@ -216,27 +217,21 @@ def run_stealth_automation():
             # 8. Click Complete Registration
             print("Clicking Complete Registration...")
             complete_button = WebDriverWait(driver, 15).until(
-                EC.presence_of_element_located((By.XPATH, "//*[contains(text(), 'Complete') or contains(text(), 'complete') or contains(text(), 'Submit')]"))
+                EC.element_to_be_clickable((By.XPATH, "//*[contains(text(), 'Complete') or contains(text(), 'complete') or contains(text(), 'Submit')]"))
             )
-            driver.execute_script("arguments[0].click();", complete_button)
+            ActionChains(driver).move_to_element(complete_button).click().perform()
 
             print("Registration submitted! Waiting for completion...")
             human_like_delay(3, 5)
             print("AUTOMATION COMPLETE!")
         else:
-            print("Failed to receive verification code. Taking screenshot...")
-            # Take a picture of the screen so we can see what went wrong!
+            print("Failed to receive verification code. Taking debug screenshot...")
             driver.save_screenshot("debug_error.png")
-            print("Screenshot saved as debug_error.png")
-            
-            import sys
-            sys.exit(1) # This forces GitHub to show a red 'X' so you know it failed!
+            sys.exit(1)
 
     except Exception as e:
         print(f"Error encountered: {e}")
-        # Also take a screenshot if it crashes randomly
         driver.save_screenshot("debug_error.png")
-        import sys
         sys.exit(1)
         
     finally:
