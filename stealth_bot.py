@@ -224,10 +224,21 @@ def run_stealth_automation():
             human_like_delay(3, 5)
             print("AUTOMATION COMPLETE!")
         else:
-            print("Failed to receive or extract verification code from the API.")
+            print("Failed to receive verification code. Taking screenshot...")
+            # Take a picture of the screen so we can see what went wrong!
+            driver.save_screenshot("debug_error.png")
+            print("Screenshot saved as debug_error.png")
+            
+            import sys
+            sys.exit(1) # This forces GitHub to show a red 'X' so you know it failed!
 
     except Exception as e:
         print(f"Error encountered: {e}")
+        # Also take a screenshot if it crashes randomly
+        driver.save_screenshot("debug_error.png")
+        import sys
+        sys.exit(1)
+        
     finally:
         driver.quit()
         display.stop()
