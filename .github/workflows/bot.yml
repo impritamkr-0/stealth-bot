@@ -7,28 +7,27 @@ jobs:
   run-automation:
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
 
-    - name: Install Dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y xvfb x11-utils
-        pip install -r requirements.txt
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb x11-utils
+          pip install -r requirements.txt
 
-    - name: Run Bot Script
-      run: |
-        python stealth_bot.py
+      - name: Run Bot Script
+        run: |
+          python stealth_bot.py
 
-    # THIS NEW STEP SAVES THE SCREENSHOT FOR YOU TO DOWNLOAD!
-    - name: Upload Debug Screenshot
-      uses: actions/upload-artifact@v4
-      if: always() 
-      with:
-        name: bot-debug-screenshot
-        path: *.png
+      - name: Upload Debug Screenshot
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bot-debug-screenshot
+          path: "*.png"
