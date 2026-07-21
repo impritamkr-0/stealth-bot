@@ -140,44 +140,24 @@ def run_stealth_automation():
     try:
         print(f"Opening registration landing page: {TARGET_URL}")
         driver.get(TARGET_URL)
-        human_like_delay(3, 5)
+        human_like_delay(4, 6)
+
+        # Force state shift to registration mode via JS event dispatch
+        print("Ensuring registration form state is active...")
+        driver.execute_script("""
+            let regLink = Array.from(document.querySelectorAll('a, span, button')).find(
+                el => el.textContent.trim().toLowerCase() === 'register'
+            );
+            if (regLink) regLink.click();
+        """)
+        human_like_delay(2, 3)
 
         # ========================================================= #
-        # STEP 1: SWITCH FROM LOGIN TO REGISTER                    #
-        # ========================================================= #
-        print("Looking for 'Register' button/link inside modal...")
-        
-        # Target the 'Register' link on the modal directly
-        register_click_success = False
-        register_xpaths = [
-            "//a[contains(text(), 'Register')]",
-            "//span[contains(text(), 'Register')]",
-            "//*[contains(text(), \"Don't have an account?\")]/following-sibling::*",
-            "//*[contains(text(), \"Don't have an account?\")]//a"
-        ]
-
-        for xpath in register_xpaths:
-            try:
-                elem = driver.find_element(By.XPATH, xpath)
-                if elem.is_displayed():
-                    driver.execute_script("arguments[0].click();", elem)
-                    print(f"Clicked Register link using: {xpath}")
-                    register_click_success = True
-                    break
-            except Exception:
-                continue
-
-        if not register_click_success:
-            print("Notice: Could not locate explicit Register link, proceeding to check for email field directly.")
-
-        human_like_delay(1.5, 2.5)
-
-        # ========================================================= #
-        # STEP 2: ENTER EMAIL ADDRESS                              #
+        # STEP 1: ENTER EMAIL ADDRESS                               #
         # ========================================================= #
         print("Waiting for Email input field...")
-        email_field = wait.until(EC.visibility_of_element_located((
-            By.CSS_SELECTOR, "input[type='email'], input[placeholder*='Email'], input[placeholder*='email']"
+        email_field = wait.until(EC.presence_of_element_located((
+            By.XPATH, "//input[@type='email'] | //input[contains(@placeholder, 'Email') or contains(@placeholder, 'email')]"
         )))
         
         print(f"Entering email address: {my_email}")
@@ -193,7 +173,7 @@ def run_stealth_automation():
         human_like_delay(2, 3)
 
         # ========================================================= #
-        # STEP 3: SET & CONFIRM PASSWORD                           #
+        # STEP 2: SET & CONFIRM PASSWORD                            #
         # ========================================================= #
         print("Waiting for Password input fields...")
         password_input = wait.until(EC.presence_of_element_located((
@@ -211,7 +191,7 @@ def run_stealth_automation():
         print("Entering Confirm Password...")
         human_like_type(confirm_input, secure_password)
 
-        # Trigger React validation events
+        # Trigger React state change handlers
         driver.execute_script("arguments[0].dispatchEvent(new Event('change', { bubbles: true }));", confirm_input)
         driver.execute_script("arguments[0].dispatchEvent(new Event('blur', { bubbles: true }));", confirm_input)
         human_like_delay(1, 2)
@@ -224,7 +204,7 @@ def run_stealth_automation():
         human_like_delay(2, 3)
 
         # ========================================================= #
-        # STEP 4: WAIT FOR VERIFICATION CODE VIA MAIL.TM API        #
+        # STEP 3: WAIT FOR VERIFICATION CODE VIA MAIL.TM API        #
         # ========================================================= #
         print(f"Polling Mail.tm every {POLLING_DELAY}s for verification code...")
         verification_code = None
@@ -248,7 +228,7 @@ def run_stealth_automation():
             raise Exception("Timeout waiting for verification email.")
 
         # ========================================================= #
-        # STEP 5: ENTER CODE & COMPLETE REGISTRATION               #
+        # STEP 4: ENTER CODE & COMPLETE REGISTRATION               #
         # ========================================================= #
         print("Waiting for Verification Code input field...")
         code_input = wait.until(EC.presence_of_element_located((
