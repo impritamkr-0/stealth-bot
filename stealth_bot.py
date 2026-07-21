@@ -169,14 +169,18 @@ def run_stealth_automation():
         confirm_password_field.send_keys(Keys.ENTER)
         human_like_delay(2, 3)
 
-        # Fallback click if ENTER key didn't close modal
+# Fallback click if ENTER key didn't close modal
         try:
-            next_button_2 = driver.find_element(By.XPATH, "//button[contains(., 'Next Step') or contains(., 'Next')]")
-            if next_button_2.is_displayed():
-                print("Clicking Next Step via ActionChains fallback...")
-                ActionChains(driver).move_to_element(next_button_2).click().perform()
-        except Exception:
-            pass
+            print("Locating the active Next Step button on the modal...")
+            # Find ALL 'Next Step' buttons on the page
+            next_buttons = driver.find_elements(By.XPATH, "//*[contains(text(), 'Next Step') or contains(text(), 'next step')]")
+            
+            if next_buttons:
+                # Select the very last one added to the screen (the modal button) and force click it
+                driver.execute_script("arguments[0].click();", next_buttons[-1])
+                print("Successfully clicked the modal's Next Step button!")
+        except Exception as e:
+            print(f"Fallback click failed: {e}")
 
         human_like_delay(3, 5)
 
