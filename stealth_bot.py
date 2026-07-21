@@ -148,48 +148,34 @@ def run_stealth_automation():
         # ========================================================= #
         try:
             print("Checking for interactive tour/promo overlay (Exit button)...")
-            exit_btn = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((
+            exit_btn = WebDriverWait(driver, 8).until(EC.presence_of_element_located((
                 By.XPATH, "//*[contains(text(), 'Exit') or contains(text(), 'exit') or contains(@class, 'close')]"
             )))
             driver.execute_script("arguments[0].click();", exit_btn)
             print("Promo modal dismissed successfully!")
-            human_like_delay(1, 2)
+            time.sleep(2)  # Wait for overlay fade animation
         except Exception:
             print("No promo modal detected, continuing...")
 
         # ========================================================= #
-        # STEP 1: CLICK REGISTER LINK                              #
+        # STEP 1: SWITCH FROM LOGIN TO REGISTER                    #
         # ========================================================= #
-        print("Looking for 'Register' link...")
-        register_selectors = [
-            "//a[contains(text(), 'Register')]",
-            "//span[contains(text(), 'Register')]",
-            "//*[contains(text(), \"Don't have an account?\")]//following-sibling::*",
-            "//*[contains(text(), 'Register')]"
-        ]
-        
-        register_clicked = False
-        for selector in register_selectors:
-            try:
-                reg_elem = driver.find_element(By.XPATH, selector)
-                if reg_elem.is_displayed():
-                    driver.execute_script("arguments[0].click();", reg_elem)
-                    print(f"Successfully clicked Register link via: {selector}")
-                    register_clicked = True
-                    break
-            except Exception:
-                continue
-
-        if not register_clicked:
-            print("Warning: Direct click on Register failed, trying ActionChains fallback...")
-
-        human_like_delay(1, 2)
+        print("Switching from Login to Register screen...")
+        try:
+            reg_link = wait.until(EC.presence_of_element_located((
+                By.XPATH, "//*[contains(text(), \"Don't have an account?\")]/following-sibling::* | //*[text()='Register']"
+            )))
+            driver.execute_script("arguments[0].click();", reg_link)
+            print("Clicked Register link!")
+            human_like_delay(1.5, 2.5)
+        except Exception as e:
+            print(f"Warning: Could not explicitly click Register link ({e}). Attempting to locate email field directly...")
 
         # ========================================================= #
-        # STEP 2: CREATE ACCOUNT (EMAIL)                           #
+        # STEP 2: ENTER EMAIL & CLICK NEXT STEP                     #
         # ========================================================= #
-        print("Waiting for 'Create Account' screen...")
-        email_field = wait.until(EC.presence_of_element_located((
+        print("Waiting for Email input field...")
+        email_field = wait.until(EC.visibility_of_element_located((
             By.CSS_SELECTOR, "input[type='email'], input[placeholder*='Email'], input[placeholder*='email']"
         )))
         print(f"Entering email address: {my_email}")
@@ -197,7 +183,7 @@ def run_stealth_automation():
         human_like_delay(1, 2)
 
         print("Clicking Next Step after email...")
-        next_btn_create = wait.until(EC.element_to_be_clickable((
+        next_btn_create = wait.until(EC.presence_of_element_located((
             By.XPATH, "//button[contains(translate(text(), 'NEXT STEP', 'next step'), 'next step')]"
         )))
         driver.execute_script("arguments[0].click();", next_btn_create)
@@ -222,16 +208,16 @@ def run_stealth_automation():
         print("Entering Confirm Password...")
         human_like_type(confirm_input, secure_password)
 
-        # Fire input events to trigger JS validation
+        # Trigger React/Vue validation events
         driver.execute_script("arguments[0].dispatchEvent(new Event('change', { bubbles: true }));", confirm_input)
         driver.execute_script("arguments[0].dispatchEvent(new Event('blur', { bubbles: true }));", confirm_input)
         human_like_delay(1, 2)
 
         print("Clicking Next Step after password...")
-        next_btn_password = wait.until(EC.element_to_be_clickable((
+        next_btn_password = wait.until(EC.presence_of_element_located((
             By.XPATH, "//button[contains(translate(text(), 'NEXT STEP', 'next step'), 'next step')]"
         )))
-        ActionChains(driver).move_to_element(next_btn_password).click().perform()
+        driver.execute_script("arguments[0].click();", next_btn_password)
         human_like_delay(2, 3)
 
         # ========================================================= #
@@ -270,10 +256,10 @@ def run_stealth_automation():
         human_like_delay(1, 2)
 
         print("Clicking Complete Registration...")
-        complete_btn = wait.until(EC.element_to_be_clickable((
+        complete_btn = wait.until(EC.presence_of_element_located((
             By.XPATH, "//button[contains(translate(text(), 'COMPLETE REGISTRATION', 'complete registration'), 'complete registration')] | //button[contains(text(), 'Submit')]"
         )))
-        ActionChains(driver).move_to_element(complete_btn).click().perform()
+        driver.execute_script("arguments[0].click();", complete_btn)
 
         human_like_delay(5, 7)
         print("AUTOMATION COMPLETE!")
