@@ -148,10 +148,10 @@ def run_stealth_automation():
         # ========================================================= #
         try:
             print("Checking for interactive tour/promo overlay (Exit button)...")
-            exit_btn = wait.until(EC.element_to_be_clickable((
+            exit_btn = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((
                 By.XPATH, "//*[contains(text(), 'Exit') or contains(text(), 'exit') or contains(@class, 'close')]"
             )))
-            ActionChains(driver).move_to_element(exit_btn).click().perform()
+            driver.execute_script("arguments[0].click();", exit_btn)
             print("Promo modal dismissed successfully!")
             human_like_delay(1, 2)
         except Exception:
@@ -160,22 +160,37 @@ def run_stealth_automation():
         # ========================================================= #
         # STEP 1: CLICK REGISTER LINK                              #
         # ========================================================= #
-        try:
-            print("Looking for 'Register' link...")
-            register_link = wait.until(EC.element_to_be_clickable((
-                By.XPATH, "//div[contains(text(), 'account?')]/a[contains(text(), 'Register')] | //*[contains(text(), 'Register')]"
-            )))
-            ActionChains(driver).move_to_element(register_link).click().perform()
-            human_like_delay(1, 2)
-        except Exception as e:
-            print(f"Could not find Register link, assuming already on Register view: {e}")
+        print("Looking for 'Register' link...")
+        register_selectors = [
+            "//a[contains(text(), 'Register')]",
+            "//span[contains(text(), 'Register')]",
+            "//*[contains(text(), \"Don't have an account?\")]//following-sibling::*",
+            "//*[contains(text(), 'Register')]"
+        ]
+        
+        register_clicked = False
+        for selector in register_selectors:
+            try:
+                reg_elem = driver.find_element(By.XPATH, selector)
+                if reg_elem.is_displayed():
+                    driver.execute_script("arguments[0].click();", reg_elem)
+                    print(f"Successfully clicked Register link via: {selector}")
+                    register_clicked = True
+                    break
+            except Exception:
+                continue
+
+        if not register_clicked:
+            print("Warning: Direct click on Register failed, trying ActionChains fallback...")
+
+        human_like_delay(1, 2)
 
         # ========================================================= #
         # STEP 2: CREATE ACCOUNT (EMAIL)                           #
         # ========================================================= #
         print("Waiting for 'Create Account' screen...")
         email_field = wait.until(EC.presence_of_element_located((
-            By.XPATH, "//input[@type='email'] | //div[contains(text(), 'Create Account')]/following-sibling::div//input"
+            By.CSS_SELECTOR, "input[type='email'], input[placeholder*='Email'], input[placeholder*='email']"
         )))
         print(f"Entering email address: {my_email}")
         human_like_type(email_field, my_email)
@@ -185,7 +200,7 @@ def run_stealth_automation():
         next_btn_create = wait.until(EC.element_to_be_clickable((
             By.XPATH, "//button[contains(translate(text(), 'NEXT STEP', 'next step'), 'next step')]"
         )))
-        ActionChains(driver).move_to_element(next_btn_create).click().perform()
+        driver.execute_script("arguments[0].click();", next_btn_create)
         human_like_delay(2, 3)
 
         # ========================================================= #
