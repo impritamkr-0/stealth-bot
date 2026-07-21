@@ -79,6 +79,28 @@ def fetch_mail_tm_message(token, msg_id):
     res = requests.get(f"https://api.mail.tm/messages/{msg_id}", headers=headers)
     return res.json()
 
+def extract_code_from_text(text_content):
+    """Parses text to reliably extract a 4 to 6 digit verification code."""
+    if not text_content:
+        return None
+
+    # Clean HTML tags if present
+    clean_text = re.sub(r'<[^>]+>', ' ', str(text_content))
+
+    # Priority 1: Match explicit keyword phrases
+    patterns = [
+        r'(?:code|verification|pin|otp)\s*(?:is|:|\s)\s*([0-9]{4,6})',
+        r'([0-9]{4,6})\s*(?:is your verification code|is your code)',
+        r'\b([0-9]{4,6})\b'
+    ]
+
+    for pat in patterns:
+        match = re.search(pat, clean_text, re.IGNORECASE)
+        if match:
+            return match.group(1)
+            
+    return None
+
 def run_stealth_automation():
     print("Spinning up the Xvfb Ghost Monitor...")
     display = Display(visible=0, size=(1920, 1080))
@@ -120,7 +142,7 @@ def run_stealth_automation():
         driver = uc.Chrome(options=options)
 
     try:
-        # --- TAB 1: DEEPVINCI LIMITED REGISTRATION ---
+        # --- REGISTRATION PROCESS ---
         print("Opening DeepVinci Limited registration page...")
         driver.get("https://deepvincilimited.sjv.io/bkP2rv")
         human_like_delay(3, 5)
@@ -149,7 +171,7 @@ def run_stealth_automation():
         ActionChains(driver).move_to_element(next_button_1).click().perform()
         human_like_delay(2, 3)
 
-        # 4. Generate and enter strong password
+        # 4. Generate and enter password
         password = "StealthP@ssword123!"
         print("Setting password...")
         password_field = WebDriverWait(driver, 15).until(
@@ -164,19 +186,16 @@ def run_stealth_automation():
         human_like_type(confirm_password_field, password)
         human_like_delay(1, 2)
 
-        # 6. SUBMIT PASSWORD FORM NATIVELY (ENTER KEY + ACTION CHAINS)
+        # 6. Submit password form
         print("Submitting password form...")
         confirm_password_field.send_keys(Keys.ENTER)
         human_like_delay(2, 3)
 
-# Fallback click if ENTER key didn't close modal
+        # Fallback click
         try:
             print("Locating the active Next Step button on the modal...")
-            # Find ALL 'Next Step' buttons on the page
             next_buttons = driver.find_elements(By.XPATH, "//*[contains(text(), 'Next Step') or contains(text(), 'next step')]")
-            
             if next_buttons:
-                # Select the very last one added to the screen (the modal button) and force click it
                 driver.execute_script("arguments[0].click();", next_buttons[-1])
                 print("Successfully clicked the modal's Next Step button!")
         except Exception as e:
@@ -184,28 +203,28 @@ def run_stealth_automation():
 
         human_like_delay(3, 5)
 
-        # --- WAIT FOR VERIFICATION CODE VIA API (POLLING) ---
+        # --- WAIT FOR VERIFICATION CODE VIA API (POLLING - EXTENDED TO 3 MIN) ---
         print("Polling API every 5 seconds waiting for the verification email to arrive...")
         verification_code = None
 
-        for _ in range(12):  # Try for 1 minute
+        for attempt in range(36):  # Extended to 3 minutes max
             time.sleep(5)
             inbox = check_mail_tm_inbox(api_token)
 
             if len(inbox) > 0:
-                print("Email received! Extracting verification code...")
+                print(f"Email received on attempt {attempt+1}! Extracting verification code...")
                 msg_id = inbox[0]['id']
                 email_data = fetch_mail_tm_message(api_token, msg_id)
-                email_body = email_data.get('text', '') or email_data.get('html', '')
 
-                code_match = re.search(r'\b\d{4,6}\b', email_body)
-                if not code_match:
-                    code_match = re.search(r'code:\s*(\d{4,6})', email_body, re.IGNORECASE)
-                if not code_match:
-                    code_match = re.search(r'verification\s*code:\s*(\d{4,6})', email_body, re.IGNORECASE)
+                # Check intro summary, plain text, or HTML fields
+                intro_text = email_data.get('intro', '')
+                text_body = email_data.get('text', '')
+                html_body = email_data.get('html', '')
+                
+                full_content = f"{intro_text} {text_body} {html_body}"
+                verification_code = extract_code_from_text(full_content)
 
-                if code_match:
-                    verification_code = code_match.group(1)
+                if verification_code:
                     print(f"Extracted verification code: {verification_code}")
                     break
 
