@@ -2,6 +2,7 @@ import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.action_chains import ActionChains
 from pyvirtualdisplay import Display
 import time
 import random
@@ -12,49 +13,40 @@ from fake_useragent import UserAgent
 import subprocess
 import sys
 
-# --- CONFIGURATION ---
 TARGET_URL = "https://deepvincilimited.sjv.io/bkP2rv"
-POLLING_DELAY = 3  
-MAX_POLLING_ATTEMPTS = 40  # Up to 2 minutes total wait time
+POLLING_DELAY = 4  
+MAX_POLLING_ATTEMPTS = 45
 
 def get_chrome_major_version():
-    """Automatically detects the installed Chrome major version on Linux."""
     try:
         output = subprocess.check_output(['google-chrome', '--version']).decode('utf-8')
-        major_version = int(output.strip().split()[2].split('.')[0])
-        return major_version
+        return int(output.strip().split()[2].split('.')[0])
     except Exception as e:
         print(f"Failed to detect Chrome version: {e}")
         return None
 
-def human_like_delay(min_sec=1.0, max_sec=2.0):
+def human_like_delay(min_sec=1.5, max_sec=3.0):
     time.sleep(random.uniform(min_sec, max_sec))
 
 def human_like_type(driver, element, text):
-    """Types character by character and triggers native React input events."""
     element.click()
     for char in text:
         element.send_keys(char)
         driver.execute_script("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));", element)
-        time.sleep(random.uniform(0.05, 0.15))
+        time.sleep(random.uniform(0.1, 0.25))
     driver.execute_script("arguments[0].dispatchEvent(new Event('change', { bubbles: true }));", element)
 
-# --- MAIL.TM API FUNCTIONS ---
+# --- MAIL.TM API ---
 API_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
     "Accept": "application/json"
 }
 
 def create_mail_tm_account():
-    """Fetches a domain, generates an address, and returns the email & auth token."""
     try:
         res = requests.get("https://api.mail.tm/domains", headers=API_HEADERS, timeout=10)
         data = res.json()
-        if isinstance(data, list):
-            domain = data[0]['domain']
-        else:
-            domain = data.get('hydra:member', [{}])[0].get('domain')
-
+        domain = data[0]['domain'] if isinstance(data, list) else data.get('hydra:member', [{}])[0].get('domain')
         username = ''.join(random.choices(string.ascii_lowercase + string.digits, k=10))
         address = f"{username}@{domain}"
         password = "StealthBotPassword123!"
@@ -62,29 +54,24 @@ def create_mail_tm_account():
         payload = {"address": address, "password": password}
         requests.post("https://api.mail.tm/accounts", json=payload, headers=API_HEADERS, timeout=10)
         token_res = requests.post("https://api.mail.tm/token", json=payload, headers=API_HEADERS, timeout=10)
-        token = token_res.json()['token']
-        return address, token
+        return address, token_res.json()['token']
     except Exception as e:
         print(f"Mail.tm API error: {e}")
         return None, None
 
 def check_mail_tm_inbox(token):
-    """Checks the inbox using the secure JWT token."""
     headers = API_HEADERS.copy()
     headers["Authorization"] = f"Bearer {token}"
     try:
         res = requests.get("https://api.mail.tm/messages", headers=headers, timeout=10)
-        if res.status_code != 200:
-            return []
-        data = res.json()
-        if isinstance(data, list):
-            return data
-        return data.get('hydra:member', [])
+        if res.status_code == 200:
+            data = res.json()
+            return data if isinstance(data, list) else data.get('hydra:member', [])
     except Exception:
-        return []
+        pass
+    return []
 
 def fetch_mail_tm_message(token, msg_id):
-    """Fetches the actual body of the email."""
     headers = API_HEADERS.copy()
     headers["Authorization"] = f"Bearer {token}"
     try:
@@ -94,7 +81,6 @@ def fetch_mail_tm_message(token, msg_id):
         return {}
 
 def extract_code_from_text(text_content):
-    """Parses text to reliably extract a 4 to 6 digit verification code."""
     if not text_content:
         return None
     clean_text = re.sub(r'<[^>]+>', ' ', str(text_content))
@@ -125,62 +111,55 @@ def run_stealth_automation():
     print(f"Success! Got stealth email: {my_email}")
 
     ua = UserAgent()
-    user_agent = ua.random
-
     options = uc.ChromeOptions()
-    options.add_argument(f"--user-agent={user_agent}")
+    options.add_argument(f"--user-agent={ua.random}")
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
+    options.add_argument("--lang=en-US,en;q=0.9")
 
     print("Launching stealth Chrome...")
     chrome_version = get_chrome_major_version()
-    if chrome_version:
-        driver = uc.Chrome(options=options, version_main=chrome_version)
-    else:
-        driver = uc.Chrome(options=options)
-
+    driver = uc.Chrome(options=options, version_main=chrome_version) if chrome_version else uc.Chrome(options=options)
     wait = WebDriverWait(driver, 20)
+    actions = ActionChains(driver)
 
     try:
         print(f"Opening registration landing page: {TARGET_URL}")
         driver.get(TARGET_URL)
-        human_like_delay(4, 6)
+        human_like_delay(5, 7)
 
-        # Force state shift to registration mode via JS event dispatch
-        print("Ensuring registration form state is active...")
+        # Human-like interaction to bypass bot-detection heuristics
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight/4);")
+        human_like_delay(1, 2)
+
+        print("Triggering registration modal view...")
         driver.execute_script("""
             let regLink = Array.from(document.querySelectorAll('a, span, button')).find(
                 el => el.textContent.trim().toLowerCase() === 'register'
             );
             if (regLink) regLink.click();
         """)
-        human_like_delay(2, 3)
+        human_like_delay(2, 4)
 
-        # ========================================================= #
-        # STEP 1: ENTER EMAIL ADDRESS                               #
-        # ========================================================= #
+        # 1. ENTER EMAIL
         print("Waiting for Email input field...")
         email_field = wait.until(EC.presence_of_element_located((
             By.XPATH, "//input[@type='email'] | //input[contains(@placeholder, 'Email') or contains(@placeholder, 'email')]"
         )))
-        
         print(f"Entering email address: {my_email}")
-        email_field.clear()
         human_like_type(driver, email_field, my_email)
         human_like_delay(1, 2)
 
-        print("Clicking Next Step after entering email...")
+        print("Clicking Next Step...")
         next_btn_email = wait.until(EC.element_to_be_clickable((
             By.XPATH, "//button[contains(translate(text(), 'NEXT STEP', 'next step'), 'next step')]"
         )))
-        driver.execute_script("arguments[0].click();", next_btn_email)
-        human_like_delay(2, 3)
+        actions.move_to_element(next_btn_email).pause(0.5).click().perform()
+        human_like_delay(3, 4)
 
-        # ========================================================= #
-        # STEP 2: SET & CONFIRM PASSWORD (STRICT VALIDATION)        #
-        # ========================================================= #
+        # 2. ENTER PASSWORD
         print("Waiting for Password input fields...")
         password_input = wait.until(EC.presence_of_element_located((
             By.XPATH, "//input[@placeholder='Password'] | (//input[@type='password'])[1]"
@@ -192,28 +171,22 @@ def run_stealth_automation():
         secure_password = "StealthP@ssword2026!"
         print("Entering Password...")
         human_like_type(driver, password_input, secure_password)
-        human_like_delay(0.5, 1)
-
+        human_like_delay(0.5, 1.0)
         print("Entering Confirm Password...")
         human_like_type(driver, confirm_input, secure_password)
         human_like_delay(1, 2)
 
-        print("Clicking Next Step after entering password...")
+        print("Clicking Next Step for password submission...")
         next_btn_pass = wait.until(EC.element_to_be_clickable((
             By.XPATH, "//button[contains(translate(text(), 'NEXT STEP', 'next step'), 'next step')]"
         )))
-        
-        # Ensure the button is fully enabled before clicking
         driver.execute_script("arguments[0].removeAttribute('disabled');", next_btn_pass)
-        driver.execute_script("arguments[0].click();", next_btn_pass)
-        print("Password form submitted successfully! Waiting for verification code email...")
-        human_like_delay(3, 4)
+        actions.move_to_element(next_btn_pass).pause(0.5).click().perform()
+        print("Form submitted via human action simulation! Polling inbox for verification email...")
+        human_like_delay(4, 6)
 
-        # ========================================================= #
-        # STEP 3: WAIT FOR VERIFICATION CODE VIA MAIL.TM API        #
-        # ========================================================= #
+        # 3. POLL INBOX FOR CODE
         verification_code = None
-
         for attempt in range(MAX_POLLING_ATTEMPTS):
             time.sleep(POLLING_DELAY)
             inbox = check_mail_tm_inbox(api_token)
@@ -222,7 +195,6 @@ def run_stealth_automation():
                 print(f"Inbox has {len(inbox)} message(s) on attempt {attempt+1}. Inspecting...")
                 msg_id = inbox[0]['id']
                 email_data = fetch_mail_tm_message(api_token, msg_id)
-                
                 full_content = f"{email_data.get('intro', '')} {email_data.get('text', '')} {email_data.get('html', '')}"
                 verification_code = extract_code_from_text(full_content)
 
@@ -233,16 +205,14 @@ def run_stealth_automation():
                 print(f"Attempt {attempt+1}: Inbox empty, waiting...")
 
         if not verification_code:
-            raise Exception("Timeout waiting for verification email containing a valid code.")
+            raise Exception("Timeout waiting for verification email.")
 
-        # ========================================================= #
-        # STEP 4: ENTER CODE & COMPLETE REGISTRATION               #
-        # ========================================================= #
+        # 4. ENTER VERIFICATION CODE
         print("Waiting for Verification Code input field...")
         code_input = wait.until(EC.presence_of_element_located((
             By.XPATH, "//input[@placeholder='Verification Code'] | //input[@type='text']"
         )))
-        print(f"Entering extracted verification code: {verification_code}")
+        print(f"Entering code: {verification_code}")
         human_like_type(driver, code_input, verification_code)
         human_like_delay(1, 2)
 
@@ -250,7 +220,7 @@ def run_stealth_automation():
         complete_btn = wait.until(EC.element_to_be_clickable((
             By.XPATH, "//button[contains(translate(text(), 'COMPLETE REGISTRATION', 'complete registration'), 'complete registration')] | //button[contains(text(), 'Submit')]"
         )))
-        driver.execute_script("arguments[0].click();", complete_btn)
+        actions.move_to_element(complete_btn).pause(0.5).click().perform()
 
         human_like_delay(5, 7)
         print("AUTOMATION COMPLETE SUCCESSFUL!")
@@ -259,7 +229,7 @@ def run_stealth_automation():
         print(f"Error encountered: {e}")
         try:
             driver.save_screenshot("debug_error_visual_flow.png")
-            print("Debug screenshot saved: debug_error_visual_flow.png")
+            print("Debug screenshot saved.")
         except Exception:
             pass
         sys.exit(1)
