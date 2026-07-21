@@ -14,8 +14,8 @@ import sys
 
 # --- CONFIGURATION ---
 TARGET_URL = "https://deepvincilimited.sjv.io/bkP2rv"
-POLLING_DELAY = 4  
-MAX_POLLING_ATTEMPTS = 45  # Up to 3 minutes total wait time
+POLLING_DELAY = 3  
+MAX_POLLING_ATTEMPTS = 40  # Up to 2 minutes total wait time
 
 def get_chrome_major_version():
     """Automatically detects the installed Chrome major version on Linux."""
@@ -30,53 +30,68 @@ def get_chrome_major_version():
 def human_like_delay(min_sec=1.0, max_sec=2.0):
     time.sleep(random.uniform(min_sec, max_sec))
 
-def human_like_type(element, text, min_delay=0.08, max_delay=0.18):
+def human_like_type(driver, element, text):
+    """Types character by character and triggers native React input events."""
+    element.click()
     for char in text:
         element.send_keys(char)
-        time.sleep(random.uniform(min_delay, max_delay))
+        driver.execute_script("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));", element)
+        time.sleep(random.uniform(0.05, 0.15))
+    driver.execute_script("arguments[0].dispatchEvent(new Event('change', { bubbles: true }));", element)
 
-# --- GUERRILLA MAIL API FUNCTIONS ---
-GUERRILLA_API_BASE = "https://api.guerrillamail.com/ajax.php"
+# --- MAIL.TM API FUNCTIONS ---
 API_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
     "Accept": "application/json"
 }
 
-def create_guerrilla_account():
-    """Initializes a Guerrilla Mail session and returns the email address & session token."""
+def create_mail_tm_account():
+    """Fetches a domain, generates an address, and returns the email & auth token."""
     try:
-        url = f"{GUERRILLA_API_BASE}?f=get_email_address&lang=en"
-        res = requests.get(url, headers=API_HEADERS, timeout=10)
+        res = requests.get("https://api.mail.tm/domains", headers=API_HEADERS, timeout=10)
         data = res.json()
-        email = data.get('email_addr')
-        sid_token = data.get('sid_token')
-        return email, sid_token
+        if isinstance(data, list):
+            domain = data[0]['domain']
+        else:
+            domain = data.get('hydra:member', [{}])[0].get('domain')
+
+        username = ''.join(random.choices(string.ascii_lowercase + string.digits, k=10))
+        address = f"{username}@{domain}"
+        password = "StealthBotPassword123!"
+
+        payload = {"address": address, "password": password}
+        requests.post("https://api.mail.tm/accounts", json=payload, headers=API_HEADERS, timeout=10)
+        token_res = requests.post("https://api.mail.tm/token", json=payload, headers=API_HEADERS, timeout=10)
+        token = token_res.json()['token']
+        return address, token
     except Exception as e:
-        print(f"Guerrilla Mail initialization error: {e}")
+        print(f"Mail.tm API error: {e}")
         return None, None
 
-def check_guerrilla_inbox(sid_token):
-    """Checks the Guerrilla Mail inbox using the active session token."""
+def check_mail_tm_inbox(token):
+    """Checks the inbox using the secure JWT token."""
+    headers = API_HEADERS.copy()
+    headers["Authorization"] = f"Bearer {token}"
     try:
-        url = f"{GUERRILLA_API_BASE}?f=check_email&sid_token={sid_token}&seq=0"
-        res = requests.get(url, headers=API_HEADERS, timeout=10)
-        if res.status_code == 200:
-            data = res.json()
-            return data.get('list', [])
+        res = requests.get("https://api.mail.tm/messages", headers=headers, timeout=10)
+        if res.status_code != 200:
+            return []
+        data = res.json()
+        if isinstance(data, list):
+            return data
+        return data.get('hydra:member', [])
     except Exception:
-        pass
-    return []
+        return []
 
-def fetch_guerrilla_message(sid_token, mail_id):
-    """Fetches the full message text/body of a specific email ID."""
+def fetch_mail_tm_message(token, msg_id):
+    """Fetches the actual body of the email."""
+    headers = API_HEADERS.copy()
+    headers["Authorization"] = f"Bearer {token}"
     try:
-        url = f"{GUERRILLA_API_BASE}?f=fetch_email&sid_token={sid_token}&email_id={mail_id}"
-        res = requests.get(url, headers=API_HEADERS, timeout=10)
-        if res.status_code == 200:
-            return res.json()
+        res = requests.get(f"https://api.mail.tm/messages/{msg_id}", headers=headers, timeout=10)
+        return res.json()
     except Exception:
-        pass
-    return {}
+        return {}
 
 def extract_code_from_text(text_content):
     """Parses text to reliably extract a 4 to 6 digit verification code."""
@@ -92,7 +107,6 @@ def extract_code_from_text(text_content):
         match = re.search(pat, clean_text, re.IGNORECASE)
         if match:
             code = match.group(1)
-            # Filter out common false positives like years (2024, 2026) or tracking ports
             if code not in ["2024", "2025", "2026", "8080", "5000", "443"]:
                 return code
     return None
@@ -102,13 +116,13 @@ def run_stealth_automation():
     display = Display(visible=0, size=(1920, 1080))
     display.start()
 
-    print("Generating temporary email via Guerrilla Mail API...")
-    my_email, sid_token = create_guerrilla_account()
-    if not my_email or not sid_token:
-        print("Failed to generate Guerrilla Mail account. Exiting.")
+    print("Generating temporary email via Mail.tm API...")
+    my_email, api_token = create_mail_tm_account()
+    if not my_email:
+        print("Failed to generate email. Exiting.")
         display.stop()
         return
-    print(f"Success! Got Guerrilla Mail address: {my_email}")
+    print(f"Success! Got stealth email: {my_email}")
 
     ua = UserAgent()
     user_agent = ua.random
@@ -154,18 +168,18 @@ def run_stealth_automation():
         
         print(f"Entering email address: {my_email}")
         email_field.clear()
-        human_like_type(email_field, my_email)
+        human_like_type(driver, email_field, my_email)
         human_like_delay(1, 2)
 
         print("Clicking Next Step after entering email...")
-        next_btn_email = wait.until(EC.presence_of_element_located((
+        next_btn_email = wait.until(EC.element_to_be_clickable((
             By.XPATH, "//button[contains(translate(text(), 'NEXT STEP', 'next step'), 'next step')]"
         )))
         driver.execute_script("arguments[0].click();", next_btn_email)
         human_like_delay(2, 3)
 
         # ========================================================= #
-        # STEP 2: SET & CONFIRM PASSWORD                            #
+        # STEP 2: SET & CONFIRM PASSWORD (STRICT VALIDATION)        #
         # ========================================================= #
         print("Waiting for Password input fields...")
         password_input = wait.until(EC.presence_of_element_located((
@@ -175,51 +189,45 @@ def run_stealth_automation():
             By.XPATH, "//input[@placeholder='Confirm Password'] | (//input[@type='password'])[2]"
         )))
 
-        secure_password = "Stealth@P@ssword99!"
+        secure_password = "StealthP@ssword2026!"
         print("Entering Password...")
-        human_like_type(password_input, secure_password)
+        human_like_type(driver, password_input, secure_password)
         human_like_delay(0.5, 1)
 
         print("Entering Confirm Password...")
-        human_like_type(confirm_input, secure_password)
-
-        # Trigger React state change handlers
-        driver.execute_script("arguments[0].dispatchEvent(new Event('change', { bubbles: true }));", confirm_input)
-        driver.execute_script("arguments[0].dispatchEvent(new Event('blur', { bubbles: true }));", confirm_input)
+        human_like_type(driver, confirm_input, secure_password)
         human_like_delay(1, 2)
 
         print("Clicking Next Step after entering password...")
-        next_btn_pass = wait.until(EC.presence_of_element_located((
+        next_btn_pass = wait.until(EC.element_to_be_clickable((
             By.XPATH, "//button[contains(translate(text(), 'NEXT STEP', 'next step'), 'next step')]"
         )))
+        
+        # Ensure the button is fully enabled before clicking
+        driver.execute_script("arguments[0].removeAttribute('disabled');", next_btn_pass)
         driver.execute_script("arguments[0].click();", next_btn_pass)
-        human_like_delay(2, 3)
+        print("Password form submitted successfully! Waiting for verification code email...")
+        human_like_delay(3, 4)
 
         # ========================================================= #
-        # STEP 3: WAIT FOR VERIFICATION CODE VIA GUERRILLA API      #
+        # STEP 3: WAIT FOR VERIFICATION CODE VIA MAIL.TM API        #
         # ========================================================= #
-        print(f"Polling Guerrilla inbox every {POLLING_DELAY}s for verification code...")
         verification_code = None
 
         for attempt in range(MAX_POLLING_ATTEMPTS):
             time.sleep(POLLING_DELAY)
-            messages = check_guerrilla_inbox(sid_token)
+            inbox = check_mail_tm_inbox(api_token)
 
-            if messages:
-                print(f"Inbox has {len(messages)} message(s) on attempt {attempt+1}. Inspecting...")
-                for msg in messages:
-                    mail_id = msg['mail_id']
-                    email_data = fetch_guerrilla_message(sid_token, mail_id)
-                    
-                    full_content = f"{email_data.get('mail_subject', '')} {email_data.get('mail_body', '')}"
-                    code = extract_code_from_text(full_content)
-
-                    if code:
-                        verification_code = code
-                        print(f"Extracted valid verification code: {verification_code}")
-                        break
+            if inbox:
+                print(f"Inbox has {len(inbox)} message(s) on attempt {attempt+1}. Inspecting...")
+                msg_id = inbox[0]['id']
+                email_data = fetch_mail_tm_message(api_token, msg_id)
                 
+                full_content = f"{email_data.get('intro', '')} {email_data.get('text', '')} {email_data.get('html', '')}"
+                verification_code = extract_code_from_text(full_content)
+
                 if verification_code:
+                    print(f"Extracted valid verification code: {verification_code}")
                     break
             else:
                 print(f"Attempt {attempt+1}: Inbox empty, waiting...")
@@ -235,11 +243,11 @@ def run_stealth_automation():
             By.XPATH, "//input[@placeholder='Verification Code'] | //input[@type='text']"
         )))
         print(f"Entering extracted verification code: {verification_code}")
-        human_like_type(code_input, verification_code)
+        human_like_type(driver, code_input, verification_code)
         human_like_delay(1, 2)
 
         print("Clicking Complete Registration...")
-        complete_btn = wait.until(EC.presence_of_element_located((
+        complete_btn = wait.until(EC.element_to_be_clickable((
             By.XPATH, "//button[contains(translate(text(), 'COMPLETE REGISTRATION', 'complete registration'), 'complete registration')] | //button[contains(text(), 'Submit')]"
         )))
         driver.execute_script("arguments[0].click();", complete_btn)
