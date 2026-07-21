@@ -84,14 +84,17 @@ def extract_code_from_text(text_content):
         return None
     clean_text = re.sub(r'<[^>]+>', ' ', str(text_content))
     patterns = [
-        r'(?:code|verification|otp)\s*(?:is|:|\s)\s*([0-9]{4,6})',
-        r'([0-9]{4,6})\s*(?:is your verification code|is your code)',
+        r'(?:code|verification|otp|pin)\s*(?:is|:|\s)\s*([0-9]{4,6})',
+        r'([0-9]{4,6})\s*(?:is your verification code|is your code|is your pin)',
         r'\b([0-9]{4,6})\b'
     ]
     for pat in patterns:
         match = re.search(pat, clean_text, re.IGNORECASE)
         if match:
-            return match.group(1)
+            code = match.group(1)
+            # Filter out common false positives like years (2024, 2026) or tracking ports
+            if code not in ["2024", "2025", "2026", "8080", "5000", "443"]:
+                return code
     return None
 
 def run_stealth_automation():
@@ -203,19 +206,26 @@ def run_stealth_automation():
             messages = check_guerrilla_inbox(sid_token)
 
             if messages:
-                print(f"Email received on attempt {attempt+1}! Parsing code...")
-                mail_id = messages[0]['mail_id']
-                email_data = fetch_guerrilla_message(sid_token, mail_id)
-                
-                full_content = f"{email_data.get('mail_subject', '')} {email_data.get('mail_body', '')}"
-                verification_code = extract_code_from_text(full_content)
+                print(f"Inbox has {len(messages)} message(s) on attempt {attempt+1}. Inspecting...")
+                for msg in messages:
+                    mail_id = msg['mail_id']
+                    email_data = fetch_guerrilla_message(sid_token, mail_id)
+                    
+                    full_content = f"{email_data.get('mail_subject', '')} {email_data.get('mail_body', '')}"
+                    code = extract_code_from_text(full_content)
 
+                    if code:
+                        verification_code = code
+                        print(f"Extracted valid verification code: {verification_code}")
+                        break
+                
                 if verification_code:
-                    print(f"Extracted verification code: {verification_code}")
                     break
+            else:
+                print(f"Attempt {attempt+1}: Inbox empty, waiting...")
 
         if not verification_code:
-            raise Exception("Timeout waiting for verification email.")
+            raise Exception("Timeout waiting for verification email containing a valid code.")
 
         # ========================================================= #
         # STEP 4: ENTER CODE & COMPLETE REGISTRATION               #
