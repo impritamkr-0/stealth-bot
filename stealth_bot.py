@@ -2,7 +2,6 @@ import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.common.action_chains import ActionChains
 from pyvirtualdisplay import Display
 import time
 import random
@@ -28,10 +27,10 @@ def get_chrome_major_version():
         print(f"Failed to detect Chrome version: {e}")
         return None
 
-def human_like_delay(min_sec=0.5, max_sec=1.5):
+def human_like_delay(min_sec=1.0, max_sec=2.0):
     time.sleep(random.uniform(min_sec, max_sec))
 
-def human_like_type(element, text, min_delay=0.08, max_delay=0.2):
+def human_like_type(element, text, min_delay=0.08, max_delay=0.18):
     for char in text:
         element.send_keys(char)
         time.sleep(random.uniform(min_delay, max_delay))
@@ -139,60 +138,64 @@ def run_stealth_automation():
     wait = WebDriverWait(driver, 20)
 
     try:
-        print(f"Opening registration page: {TARGET_URL}")
+        print(f"Opening registration landing page: {TARGET_URL}")
         driver.get(TARGET_URL)
         human_like_delay(3, 5)
 
         # ========================================================= #
-        # STEP 0: CLOSE PROMO MODAL / AD IF PRESENT                #
-        # ========================================================= #
-        try:
-            print("Checking for interactive tour/promo overlay (Exit button)...")
-            exit_btn = WebDriverWait(driver, 8).until(EC.presence_of_element_located((
-                By.XPATH, "//*[contains(text(), 'Exit') or contains(text(), 'exit') or contains(@class, 'close')]"
-            )))
-            driver.execute_script("arguments[0].click();", exit_btn)
-            print("Promo modal dismissed successfully!")
-            time.sleep(2)  # Wait for overlay fade animation
-        except Exception:
-            print("No promo modal detected, continuing...")
-
-        # ========================================================= #
         # STEP 1: SWITCH FROM LOGIN TO REGISTER                    #
         # ========================================================= #
-        print("Switching from Login to Register screen...")
-        try:
-            reg_link = wait.until(EC.presence_of_element_located((
-                By.XPATH, "//*[contains(text(), \"Don't have an account?\")]/following-sibling::* | //*[text()='Register']"
-            )))
-            driver.execute_script("arguments[0].click();", reg_link)
-            print("Clicked Register link!")
-            human_like_delay(1.5, 2.5)
-        except Exception as e:
-            print(f"Warning: Could not explicitly click Register link ({e}). Attempting to locate email field directly...")
+        print("Looking for 'Register' button/link inside modal...")
+        
+        # Target the 'Register' link on the modal directly
+        register_click_success = False
+        register_xpaths = [
+            "//a[contains(text(), 'Register')]",
+            "//span[contains(text(), 'Register')]",
+            "//*[contains(text(), \"Don't have an account?\")]/following-sibling::*",
+            "//*[contains(text(), \"Don't have an account?\")]//a"
+        ]
+
+        for xpath in register_xpaths:
+            try:
+                elem = driver.find_element(By.XPATH, xpath)
+                if elem.is_displayed():
+                    driver.execute_script("arguments[0].click();", elem)
+                    print(f"Clicked Register link using: {xpath}")
+                    register_click_success = True
+                    break
+            except Exception:
+                continue
+
+        if not register_click_success:
+            print("Notice: Could not locate explicit Register link, proceeding to check for email field directly.")
+
+        human_like_delay(1.5, 2.5)
 
         # ========================================================= #
-        # STEP 2: ENTER EMAIL & CLICK NEXT STEP                     #
+        # STEP 2: ENTER EMAIL ADDRESS                              #
         # ========================================================= #
         print("Waiting for Email input field...")
         email_field = wait.until(EC.visibility_of_element_located((
             By.CSS_SELECTOR, "input[type='email'], input[placeholder*='Email'], input[placeholder*='email']"
         )))
+        
         print(f"Entering email address: {my_email}")
+        email_field.clear()
         human_like_type(email_field, my_email)
         human_like_delay(1, 2)
 
-        print("Clicking Next Step after email...")
-        next_btn_create = wait.until(EC.presence_of_element_located((
+        print("Clicking Next Step after entering email...")
+        next_btn_email = wait.until(EC.presence_of_element_located((
             By.XPATH, "//button[contains(translate(text(), 'NEXT STEP', 'next step'), 'next step')]"
         )))
-        driver.execute_script("arguments[0].click();", next_btn_create)
+        driver.execute_script("arguments[0].click();", next_btn_email)
         human_like_delay(2, 3)
 
         # ========================================================= #
-        # STEP 3: SET PASSWORD                                     #
+        # STEP 3: SET & CONFIRM PASSWORD                           #
         # ========================================================= #
-        print("Waiting for 'Set Password' screen...")
+        print("Waiting for Password input fields...")
         password_input = wait.until(EC.presence_of_element_located((
             By.XPATH, "//input[@placeholder='Password'] | (//input[@type='password'])[1]"
         )))
@@ -208,20 +211,20 @@ def run_stealth_automation():
         print("Entering Confirm Password...")
         human_like_type(confirm_input, secure_password)
 
-        # Trigger React/Vue validation events
+        # Trigger React validation events
         driver.execute_script("arguments[0].dispatchEvent(new Event('change', { bubbles: true }));", confirm_input)
         driver.execute_script("arguments[0].dispatchEvent(new Event('blur', { bubbles: true }));", confirm_input)
         human_like_delay(1, 2)
 
-        print("Clicking Next Step after password...")
-        next_btn_password = wait.until(EC.presence_of_element_located((
+        print("Clicking Next Step after entering password...")
+        next_btn_pass = wait.until(EC.presence_of_element_located((
             By.XPATH, "//button[contains(translate(text(), 'NEXT STEP', 'next step'), 'next step')]"
         )))
-        driver.execute_script("arguments[0].click();", next_btn_password)
+        driver.execute_script("arguments[0].click();", next_btn_pass)
         human_like_delay(2, 3)
 
         # ========================================================= #
-        # STEP 4: WAIT FOR VERIFICATION CODE VIA API                #
+        # STEP 4: WAIT FOR VERIFICATION CODE VIA MAIL.TM API        #
         # ========================================================= #
         print(f"Polling Mail.tm every {POLLING_DELAY}s for verification code...")
         verification_code = None
@@ -245,13 +248,13 @@ def run_stealth_automation():
             raise Exception("Timeout waiting for verification email.")
 
         # ========================================================= #
-        # STEP 5: ENTER CODE & COMPLETE                             #
+        # STEP 5: ENTER CODE & COMPLETE REGISTRATION               #
         # ========================================================= #
-        print("Waiting for Email Verification screen...")
+        print("Waiting for Verification Code input field...")
         code_input = wait.until(EC.presence_of_element_located((
             By.XPATH, "//input[@placeholder='Verification Code'] | //input[@type='text']"
         )))
-        print(f"Entering extracted code: {verification_code}")
+        print(f"Entering extracted verification code: {verification_code}")
         human_like_type(code_input, verification_code)
         human_like_delay(1, 2)
 
@@ -262,7 +265,7 @@ def run_stealth_automation():
         driver.execute_script("arguments[0].click();", complete_btn)
 
         human_like_delay(5, 7)
-        print("AUTOMATION COMPLETE!")
+        print("AUTOMATION COMPLETE SUCCESSFUL!")
 
     except Exception as e:
         print(f"Error encountered: {e}")
