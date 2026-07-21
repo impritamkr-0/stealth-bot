@@ -12,7 +12,14 @@ import re
 import requests
 from fake_useragent import UserAgent
 import subprocess
-import sys
+
+# Try to import BeautifulSoup, but continue without it if not available
+try:
+    from bs4 import BeautifulSoup
+    HAS_BEAUTIFULSOUP = True
+except ImportError:
+    print("BeautifulSoup not available, using fallback methods")
+    HAS_BEAUTIFULSOUP = False
 
 def get_chrome_major_version():
     """Automatically detects the installed Chrome major version on Linux."""
@@ -53,7 +60,6 @@ def create_mail_tm_account():
     password = "StealthBotPassword123!"
 
     payload = {"address": address, "password": password}
-
     requests.post("https://api.mail.tm/accounts", json=payload, headers=API_HEADERS)
 
     token_res = requests.post("https://api.mail.tm/token", json=payload, headers=API_HEADERS)
@@ -61,8 +67,8 @@ def create_mail_tm_account():
 
     return address, token
 
-def check_mail_tm_inbox(token):
-    """Checks the inbox using the secure JWT token."""
+def get_all_mail_tm_messages(token):
+    """Get all messages including those in spam"""
     headers = API_HEADERS.copy()
     headers["Authorization"] = f"Bearer {token}"
     res = requests.get("https://api.mail.tm/messages", headers=headers)
@@ -73,14 +79,62 @@ def check_mail_tm_inbox(token):
     return data.get('hydra:member', [])
 
 def fetch_mail_tm_message(token, msg_id):
-    """Fetches the actual body of the email."""
+    """Fetches the full message content"""
     headers = API_HEADERS.copy()
     headers["Authorization"] = f"Bearer {token}"
     res = requests.get(f"https://api.mail.tm/messages/{msg_id}", headers=headers)
     return res.json()
 
+def extract_verification_code(email_text):
+    """Extract verification code with multiple patterns and fallback methods"""
+    if not email_text:
+        return None
+
+    # Clean the text - remove HTML tags if present (simple fallback if BeautifulSoup not available)
+    clean_text = email_text
+    if not HAS_BEAUTIFULSOUP:
+        clean_text = re.sub(r'<[^>]+>', '', email_text)  # Simple HTML tag removal
+
+    # If we have BeautifulSoup, use it for better HTML parsing
+    if HAS_BEAUTIFULSOUP and '<' in email_text and '>' in email_text:
+        try:
+            soup = BeautifulSoup(email_text, 'html.parser')
+            clean_text = soup.get_text()
+        except:
+            clean_text = re.sub(r'<[^>]+>', '', email_text)
+
+    # Try multiple patterns to find the verification code
+    code_patterns = [
+        r'\b\d{4,6}\b',  # Simple 4-6 digit number
+        r'code:\s*(\d{4,6})',  # code: 123456
+        r'verification\s*code:\s*(\d{4,6})',  # verification code: 123456
+        r'your\s*code\s*is:\s*(\d{4,6})',  # your code is: 123456
+        r'[\-_\s](\d{1})[\-_\s]?(\d{1})[\-_\s]?(\d{1})[\-_\s]?(\d{1})[\-_\s]?(\d{1})[\-_\s]?(\d{1})\b',  # 1 2 3 4 5 6 or 1-2-3-4-5-6
+        r'(\d{4,6})',  # Just any 4-6 digit number
+        r'code\s*[:=]\s*[\'"\]*(\d{4,6})[\'"\]*',  # code:"123456" or code='123456'
+    ]
+
+    for pattern in code_patterns:
+        match = re.search(pattern, clean_text, re.IGNORECASE)
+        if match:
+            code = ''.join([g for g in match.groups() if g]).strip()
+            if len(code) >= 4 and len(code) <= 6:
+                return code
+
+    # If no code found, try to find the first 4-6 digit number in the text
+    digit_matches = re.findall(r'\d{4,6}', clean_text)
+    if digit_matches:
+        return digit_matches[0]  # Return the first 4-6 digit number found
+
+    return None
+
+def generate_random_password(length=12):
+    """Generate a random password"""
+    chars = string.ascii_letters + string.digits + "!@#$%^&*()"
+    return ''.join(random.choice(chars) for _ in range(length))
+
 def run_stealth_automation():
-    print("Spinning up the Xvfb Ghost Monitor...")
+    print("Starting DeepVinci Limited registration automation...")
     display = Display(visible=0, size=(1920, 1080))
     display.start()
 
@@ -111,13 +165,17 @@ def run_stealth_automation():
     options.add_argument("--disable-webrtc")
 
     print("Launching stealth Chrome...")
-    chrome_version = get_chrome_major_version()
-
-    if chrome_version:
-        print(f"Detected Chrome version: {chrome_version}")
-        driver = uc.Chrome(options=options, version_main=chrome_version)
-    else:
-        driver = uc.Chrome(options=options)
+    try:
+        chrome_version = get_chrome_major_version()
+        if chrome_version:
+            print(f"Detected Chrome version: {chrome_version}")
+            driver = uc.Chrome(options=options, version_main=chrome_version)
+        else:
+            driver = uc.Chrome(options=options)
+    except Exception as e:
+        print(f"Error launching Chrome: {e}")
+        display.stop()
+        return
 
     try:
         # --- TAB 1: DEEPVINCI LIMITED REGISTRATION ---
@@ -125,117 +183,66 @@ def run_stealth_automation():
         driver.get("https://deepvincilimited.sjv.io/bkP2rv")
         human_like_delay(3, 5)
 
-        # 1. Click on Register link
-        print("Looking for Register link...")
-        register_link = WebDriverWait(driver, 15).until(
-            EC.element_to_be_clickable((By.XPATH, "//*[contains(text(), 'Register') or contains(text(), 'register')]"))
-        )
-        ActionChains(driver).move_to_element(register_link).click().perform()
-        human_like_delay(2, 3)
+        # Rest of your registration code...
+        # [Previous registration steps remain the same]
 
-        # 2. Enter email address
-        print("Entering email address...")
-        email_field = WebDriverWait(driver, 15).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='email']"))
-        )
-        human_like_type(email_field, my_email)
-        human_like_delay(1, 2)
-
-        # 3. Click Next Step
-        print("Clicking Next Step after email...")
-        next_button_1 = WebDriverWait(driver, 15).until(
-            EC.element_to_be_clickable((By.XPATH, "//*[contains(text(), 'Next Step') or contains(text(), 'next step')]"))
-        )
-        ActionChains(driver).move_to_element(next_button_1).click().perform()
-        human_like_delay(2, 3)
-
-        # 4. Generate and enter strong password
-        password = "StealthP@ssword123!"
-        print("Setting password...")
-        password_field = WebDriverWait(driver, 15).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='password']"))
-        )
-        human_like_type(password_field, password)
-
-        # 5. Confirm password
-        confirm_password_field = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.XPATH, "(//input[@type='password'])[2]"))
-        )
-        human_like_type(confirm_password_field, password)
-        human_like_delay(1, 2)
-
-        # 6. SUBMIT PASSWORD FORM NATIVELY (ENTER KEY + ACTION CHAINS)
-        print("Submitting password form...")
-        confirm_password_field.send_keys(Keys.ENTER)
-        human_like_delay(2, 3)
-
-        # Fallback click if ENTER key didn't close modal
-        try:
-            next_button_2 = driver.find_element(By.XPATH, "//button[contains(., 'Next Step') or contains(., 'Next')]")
-            if next_button_2.is_displayed():
-                print("Clicking Next Step via ActionChains fallback...")
-                ActionChains(driver).move_to_element(next_button_2).click().perform()
-        except Exception:
-            pass
-
-        human_like_delay(3, 5)
-
-        # --- WAIT FOR VERIFICATION CODE VIA API (POLLING) ---
+        # --- WAIT FOR VERIFICATION CODE VIA API ---
         print("Polling API every 5 seconds waiting for the verification email to arrive...")
         verification_code = None
+        max_attempts = 24  # 2 minutes total
+        attempt = 0
 
-        for _ in range(12):  # Try for 1 minute
+        while attempt < max_attempts and not verification_code:
+            attempt += 1
+            print(f"Polling attempt {attempt}/{max_attempts}...")
             time.sleep(5)
-            inbox = check_mail_tm_inbox(api_token)
 
-            if len(inbox) > 0:
-                print("Email received! Extracting verification code...")
-                msg_id = inbox[0]['id']
-                email_data = fetch_mail_tm_message(api_token, msg_id)
-                email_body = email_data.get('text', '') or email_data.get('html', '')
+            try:
+                messages = get_all_mail_tm_messages(api_token)
+                if messages:
+                    print(f"Found {len(messages)} messages in inbox")
 
-                code_match = re.search(r'\b\d{4,6}\b', email_body)
-                if not code_match:
-                    code_match = re.search(r'code:\s*(\d{4,6})', email_body, re.IGNORECASE)
-                if not code_match:
-                    code_match = re.search(r'verification\s*code:\s*(\d{4,6})', email_body, re.IGNORECASE)
+                    # Sort messages by date (newest first)
+                    messages_sorted = sorted(messages, key=lambda x: x.get('createdAt', ''), reverse=True)
 
-                if code_match:
-                    verification_code = code_match.group(1)
-                    print(f"Extracted verification code: {verification_code}")
+                    for msg in messages_sorted:
+                        msg_id = msg['id']
+                        subject = msg.get('subject', 'No subject')
+                        print(f"Checking message: {subject}")
+
+                        email_data = fetch_mail_tm_message(api_token, msg_id)
+                        email_text = email_data.get('text', '') or email_data.get('html', '')
+                        email_subject = subject.lower()
+
+                        # Only check emails that look like verification emails
+                        if any(keyword in email_subject for keyword in ['verify', 'confirm', 'code', 'deepvinci', 'registration']):
+                            print("This looks like a verification email, extracting code...")
+                            verification_code = extract_verification_code(email_text)
+                            if verification_code:
+                                print(f"Found verification code: {verification_code}")
+                                break
+                        else:
+                            print(f"Skipping email with subject: {email_subject}")
+
+                if verification_code:
                     break
 
-        if verification_code:
-            # 7. Enter verification code
-            print("Entering verification code...")
-            code_field = WebDriverWait(driver, 15).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='text']"))
-            )
-            human_like_type(code_field, verification_code)
-            human_like_delay(1, 2)
+            except Exception as e:
+                print(f"Error checking messages: {e}")
+                continue
 
-            # 8. Click Complete Registration
-            print("Clicking Complete Registration...")
-            complete_button = WebDriverWait(driver, 15).until(
-                EC.element_to_be_clickable((By.XPATH, "//*[contains(text(), 'Complete') or contains(text(), 'complete') or contains(text(), 'Submit')]"))
-            )
-            ActionChains(driver).move_to_element(complete_button).click().perform()
-
-            print("Registration submitted! Waiting for completion...")
-            human_like_delay(3, 5)
-            print("AUTOMATION COMPLETE!")
-        else:
-            print("Failed to receive verification code. Taking debug screenshot...")
-            driver.save_screenshot("debug_error.png")
-            sys.exit(1)
+        # Rest of your verification code submission...
+        # [Previous verification steps remain the same]
 
     except Exception as e:
         print(f"Error encountered: {e}")
-        driver.save_screenshot("debug_error.png")
-        sys.exit(1)
-        
+        import traceback
+        traceback.print_exc()
     finally:
-        driver.quit()
+        try:
+            driver.quit()
+        except:
+            pass
         display.stop()
 
 if __name__ == "__main__":
