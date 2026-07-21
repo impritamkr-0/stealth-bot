@@ -14,9 +14,9 @@ import subprocess
 import sys
 
 # --- CONFIGURATION ---
-TARGET_URL = "https://deepvincilimited.sjv.io/bkP2rv"  # Affiliate Link
-POLLING_DELAY = 3  # Seconds between checking Mail.tm API
-MAX_POLLING_ATTEMPTS = 40  # Max attempts (120 seconds wait total)
+TARGET_URL = "https://deepvincilimited.sjv.io/bkP2rv"
+POLLING_DELAY = 2  # Seconds between checking Mail.tm API
+MAX_POLLING_ATTEMPTS = 45  # Wait up to 90 seconds total
 
 def get_chrome_major_version():
     """Automatically detects the installed Chrome major version on Linux."""
@@ -54,7 +54,7 @@ def create_mail_tm_account():
 
         username = ''.join(random.choices(string.ascii_lowercase + string.digits, k=10))
         address = f"{username}@{domain}"
-        password = "StealthP@ssword123!"  # Strong password for Mail.tm
+        password = "StealthP@ssword123!"
 
         payload = {"address": address, "password": password}
         requests.post("https://api.mail.tm/accounts", json=payload, headers=API_HEADERS, timeout=10)
@@ -94,7 +94,6 @@ def extract_code_from_text(text_content):
     """Parses text to reliably extract a 4 to 6 digit verification code."""
     if not text_content:
         return None
-    
     clean_text = re.sub(r'<[^>]+>', ' ', str(text_content))
     patterns = [
         r'(?:code|verification|otp)\s*(?:is|:|\s)\s*([0-9]{4,6})',
@@ -108,12 +107,10 @@ def extract_code_from_text(text_content):
     return None
 
 def run_stealth_automation():
-    # --- Start Virtual Display (For headless Linux environments) ---
     print("Spinning up the Xvfb Ghost Monitor...")
     display = Display(visible=0, size=(1920, 1080))
     display.start()
 
-    # --- Generate Email via API ---
     print("Generating temporary email via Mail.tm API...")
     my_email, api_token = create_mail_tm_account()
     if not my_email:
@@ -122,9 +119,9 @@ def run_stealth_automation():
         return
     print(f"Success! Got stealth email: {my_email}")
 
-    # --- Stealth Chrome Setup ---
     ua = UserAgent()
     user_agent = ua.random
+
     options = uc.ChromeOptions()
     options.add_argument(f"--user-agent={user_agent}")
     options.add_argument("--disable-blink-features=AutomationControlled")
@@ -142,112 +139,127 @@ def run_stealth_automation():
     wait = WebDriverWait(driver, 20)
 
     try:
-        # --- Navigate to the Website ---
         print(f"Opening registration page: {TARGET_URL}")
         driver.get(TARGET_URL)
         human_like_delay(3, 5)
 
-        # --- Initial Redirect/Login State Check ---
-        # The affiliate link often opens Image 0 (Welcome Back / Login) initially.
+        # ========================================================= #
+        # STEP 0: CLOSE PROMO MODAL / AD IF PRESENT                #
+        # ========================================================= #
         try:
-            print("Checking if we need to click 'Register' from the Login page (Image 0)...")
-            # Wait for Login screen text
-            wait.until(EC.presence_of_element_located((By.XPATH, "//h2[contains(text(), 'Welcome Back')]")))
-            register_link = wait.until(EC.element_to_be_clickable((By.XPATH, "//div[contains(text(), 'account?')]/a[contains(text(), 'Register')]")))
-            ActionChains(driver).move_to_element(register_link).click().perform()
+            print("Checking for interactive tour/promo overlay (Exit button)...")
+            exit_btn = wait.until(EC.element_to_be_clickable((
+                By.XPATH, "//*[contains(text(), 'Exit') or contains(text(), 'exit') or contains(@class, 'close')]"
+            )))
+            ActionChains(driver).move_to_element(exit_btn).click().perform()
+            print("Promo modal dismissed successfully!")
             human_like_delay(1, 2)
         except Exception:
-            print("Did not find Login screen. Assuming we landed on Register screen.")
+            print("No promo modal detected, continuing...")
 
-        # =========================================================
-        # STEP 1: CREATE ACCOUNT (Image 3)
-        # =========================================================
-        print("Waiting for 'Create Account' screen (Image 3)...")
-        wait.until(EC.presence_of_element_located((By.XPATH, "//h2[contains(text(), 'Create Account')]")))
-        
-        # Locate the email field specifically (using placeholder or surrounding text)
-        email_field = wait.until(EC.presence_of_element_located((By.XPATH, "//div[contains(text(), 'Create Account')]/following-sibling::div//input")))
+        # ========================================================= #
+        # STEP 1: CLICK REGISTER LINK                              #
+        # ========================================================= #
+        try:
+            print("Looking for 'Register' link...")
+            register_link = wait.until(EC.element_to_be_clickable((
+                By.XPATH, "//div[contains(text(), 'account?')]/a[contains(text(), 'Register')] | //*[contains(text(), 'Register')]"
+            )))
+            ActionChains(driver).move_to_element(register_link).click().perform()
+            human_like_delay(1, 2)
+        except Exception as e:
+            print(f"Could not find Register link, assuming already on Register view: {e}")
+
+        # ========================================================= #
+        # STEP 2: CREATE ACCOUNT (EMAIL)                           #
+        # ========================================================= #
+        print("Waiting for 'Create Account' screen...")
+        email_field = wait.until(EC.presence_of_element_located((
+            By.XPATH, "//input[@type='email'] | //div[contains(text(), 'Create Account')]/following-sibling::div//input"
+        )))
         print(f"Entering email address: {my_email}")
         human_like_type(email_field, my_email)
         human_like_delay(1, 2)
 
-        # Click the correct "Next Step" button on Image 3
-        print("Clicking Next Step (Image 3)...")
-        next_btn_create = wait.until(EC.element_to_be_clickable((By.XPATH, "//div[contains(text(), 'Create Account')]/following-sibling::div//button[contains(text(), 'Next Step')]")))
+        print("Clicking Next Step after email...")
+        next_btn_create = wait.until(EC.element_to_be_clickable((
+            By.XPATH, "//button[contains(translate(text(), 'NEXT STEP', 'next step'), 'next step')]"
+        )))
         ActionChains(driver).move_to_element(next_btn_create).click().perform()
-        human_like_delay(3, 5)
+        human_like_delay(2, 3)
 
-        # =========================================================
-        # STEP 2: SET PASSWORD (Image 1)
-        # =========================================================
-        print("Waiting for 'Set Password' screen (Image 1)...")
-        wait.until(EC.presence_of_element_located((By.XPATH, "//h2[contains(text(), 'Set Password')]")))
-        
-        # Explicitly locate the Password and Confirm Password inputs on Image 1
-        password_input = wait.until(EC.presence_of_element_located((By.XPATH, "//div[contains(text(), 'Set Password')]/following-sibling::div//input[@placeholder='Password']")))
-        confirm_input = wait.until(EC.presence_of_element_located((By.XPATH, "//div[contains(text(), 'Set Password')]/following-sibling::div//input[@placeholder='Confirm Password']")))
-        
+        # ========================================================= #
+        # STEP 3: SET PASSWORD                                     #
+        # ========================================================= #
+        print("Waiting for 'Set Password' screen...")
+        password_input = wait.until(EC.presence_of_element_located((
+            By.XPATH, "//input[@placeholder='Password'] | (//input[@type='password'])[1]"
+        )))
+        confirm_input = wait.until(EC.presence_of_element_located((
+            By.XPATH, "//input[@placeholder='Confirm Password'] | (//input[@type='password'])[2]"
+        )))
+
         secure_password = "Stealth@P@ssword99!"
         print("Entering Password...")
         human_like_type(password_input, secure_password)
         human_like_delay(0.5, 1)
-        
+
         print("Entering Confirm Password...")
         human_like_type(confirm_input, secure_password)
-        
-        # Dispatch blur event on confirm field to ensure the form registers the valid state
+
+        # Fire input events to trigger JS validation
+        driver.execute_script("arguments[0].dispatchEvent(new Event('change', { bubbles: true }));", confirm_input)
         driver.execute_script("arguments[0].dispatchEvent(new Event('blur', { bubbles: true }));", confirm_input)
         human_like_delay(1, 2)
 
-        # Click the distinct "Next Step" button on Image 1
-        print("Clicking Next Step (Image 1)...")
-        next_btn_password = wait.until(EC.element_to_be_clickable((By.XPATH, "//div[contains(text(), 'Set Password')]/following-sibling::div//button[contains(text(), 'Next Step')]")))
+        print("Clicking Next Step after password...")
+        next_btn_password = wait.until(EC.element_to_be_clickable((
+            By.XPATH, "//button[contains(translate(text(), 'NEXT STEP', 'next step'), 'next step')]"
+        )))
         ActionChains(driver).move_to_element(next_btn_password).click().perform()
-        
-        # Short wait to allow the email request to fire
-        human_like_delay(3, 5)
+        human_like_delay(2, 3)
 
-        # =========================================================
-        # STEP 3: WAIT FOR CODE VIA MAIL.TM API
-        # =========================================================
-        print(f"Polling Mail.tm every {POLLING_DELAY}s for verification code (up to {POLLING_DELAY * MAX_POLLING_ATTEMPTS}s)...")
+        # ========================================================= #
+        # STEP 4: WAIT FOR VERIFICATION CODE VIA API                #
+        # ========================================================= #
+        print(f"Polling Mail.tm every {POLLING_DELAY}s for verification code...")
         verification_code = None
+
         for attempt in range(MAX_POLLING_ATTEMPTS):
-            human_like_delay(POLLING_DELAY, POLLING_DELAY + 0.5)
+            time.sleep(POLLING_DELAY)
             inbox = check_mail_tm_inbox(api_token)
+
             if inbox:
                 print(f"Email received on attempt {attempt+1}! Parsing code...")
                 msg_id = inbox[0]['id']
                 email_data = fetch_mail_tm_message(api_token, msg_id)
                 full_content = f"{email_data.get('intro', '')} {email_data.get('text', '')} {email_data.get('html', '')}"
                 verification_code = extract_code_from_text(full_content)
+
                 if verification_code:
                     print(f"Extracted verification code: {verification_code}")
                     break
-        
+
         if not verification_code:
-            print("Failed to receive verification code in time.")
             raise Exception("Timeout waiting for verification email.")
 
-        # =========================================================
-        # STEP 4: ENTER CODE & COMPLETE (Image 2)
-        # =========================================================
-        print("Waiting for 'Email Verification' screen (Image 2)...")
-        wait.until(EC.presence_of_element_located((By.XPATH, "//h2[contains(text(), 'Email Verification')]")))
-
-        # Locate the code input field specifically on Image 2
-        code_input = wait.until(EC.presence_of_element_located((By.XPATH, "//div[contains(text(), 'Email Verification')]/following-sibling::div//input[@placeholder='Verification Code']")))
+        # ========================================================= #
+        # STEP 5: ENTER CODE & COMPLETE                             #
+        # ========================================================= #
+        print("Waiting for Email Verification screen...")
+        code_input = wait.until(EC.presence_of_element_located((
+            By.XPATH, "//input[@placeholder='Verification Code'] | //input[@type='text']"
+        )))
         print(f"Entering extracted code: {verification_code}")
         human_like_type(code_input, verification_code)
         human_like_delay(1, 2)
 
-        # Click the "Complete Registration" button specifically on Image 2
-        print("Clicking 'Complete Registration' (Image 2)...")
-        complete_btn = wait.until(EC.element_to_be_clickable((By.XPATH, "//div[contains(text(), 'Email Verification')]/following-sibling::div//button[contains(text(), 'Complete Registration')]")))
+        print("Clicking Complete Registration...")
+        complete_btn = wait.until(EC.element_to_be_clickable((
+            By.XPATH, "//button[contains(translate(text(), 'COMPLETE REGISTRATION', 'complete registration'), 'complete registration')] | //button[contains(text(), 'Submit')]"
+        )))
         ActionChains(driver).move_to_element(complete_btn).click().perform()
 
-        # --- Final Wait/Completion ---
-        print("Registration final submission completed! Waiting for final state...")
         human_like_delay(5, 7)
         print("AUTOMATION COMPLETE!")
 
@@ -259,7 +271,6 @@ def run_stealth_automation():
         except Exception:
             pass
         sys.exit(1)
-        
     finally:
         driver.quit()
         display.stop()
