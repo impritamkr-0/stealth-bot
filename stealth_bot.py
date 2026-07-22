@@ -10,17 +10,63 @@ import string
 import re
 import requests
 import sys
+import os
+import zipfile
 
 TARGET_URL = "https://deepvincilimited.sjv.io/bkP2rv"
 POLLING_DELAY = 4  
 MAX_POLLING_ATTEMPTS = 45
 
+# Fetch Proxy details from GitHub Secrets
+PROXY_HOST = os.environ.get("PROXY_HOST")
+PROXY_PORT = os.environ.get("PROXY_PORT")
+PROXY_USER = os.environ.get("PROXY_USER")
+PROXY_PASS = os.environ.get("PROXY_PASS")
+
+def create_proxy_extension(proxy_host, proxy_port, proxy_user, proxy_pass):
+    """Dynamically builds a Chrome extension to handle proxy authentication."""
+    manifest_json = """
+    {
+        "version": "1.0.0",
+        "manifest_version": 2,
+        "name": "Chrome Proxy",
+        "permissions": ["proxy", "tabs", "unlimitedStorage", "storage", "<all_urls>", "webRequest", "webRequestBlocking"],
+        "background": {"scripts": ["background.js"]},
+        "minimum_chrome_version":"22.0.0"
+    }
+    """
+    background_js = """
+    var config = {
+            mode: "fixed_servers",
+            rules: {
+              singleProxy: { scheme: "http", host: "%s", port: parseInt(%s) },
+              bypassList: ["localhost"]
+            }
+          };
+    chrome.proxy.settings.set({value: config, scope: "regular"}, function() {});
+    function callbackFn(details) {
+        return { authCredentials: { username: "%s", password: "%s" } };
+    }
+    chrome.webRequest.onAuthRequired.addListener(
+            callbackFn, {urls: ["<all_urls>"]}, ['blocking']
+    );
+    """ % (proxy_host, proxy_port, proxy_user, proxy_pass)
+    
+    pluginfile = 'proxy_auth_plugin.zip'
+    with zipfile.ZipFile(pluginfile, 'w') as zp:
+        zp.writestr("manifest.json", manifest_json)
+        zp.writestr("background.js", background_js)
+    return pluginfile
+
 def human_like_delay(min_sec=1.5, max_sec=3.0):
     time.sleep(random.uniform(min_sec, max_sec))
 
 def human_like_type(driver, element, text):
-    """Types characters one by one and triggers React validation events."""
-    element.click()
+    try:
+        element.click()
+    except Exception:
+        driver.execute_script("arguments[0].focus(); arguments[0].click();", element)
+        
     for char in text:
         element.send_keys(char)
         driver.execute_script("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));", element)
@@ -42,7 +88,6 @@ def create_mail_tm_account():
         username = ''.join(random.choices(string.ascii_lowercase + string.digits, k=10))
         address = f"{username}@{domain}"
         password = "StealthBotPassword123!"
-
         payload = {"address": address, "password": password}
         requests.post("https://api.mail.tm/accounts", json=payload, headers=API_HEADERS, timeout=10)
         token_res = requests.post("https://api.mail.tm/token", json=payload, headers=API_HEADERS, timeout=10)
@@ -97,18 +142,24 @@ def run_stealth_automation():
         return
     print(f"Success! Got stealth email: {my_email}")
 
-    options = uc.ChromeOptions() 
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
+    options = uc.ChromeOptions()
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--lang=en-US,en;q=0.9")
-    
-    # We remove version_main so uc automatically detects the GitHub runner's Chrome version
+
+    # Add the proxy extension if credentials exist
+    if PROXY_HOST and PROXY_PORT:
+        print(f"Loading Proxy: {PROXY_HOST}:{PROXY_PORT}")
+        proxy_plugin = create_proxy_extension(PROXY_HOST, PROXY_PORT, PROXY_USER, PROXY_PASS)
+        options.add_argument(f"--load-extension={os.path.abspath(proxy_plugin)}")
+    else:
+        print("WARNING: No Proxy found in environment variables. Running on standard GitHub IP.")
+
     print("Launching stealth Chrome...")
-    driver = uc.Chrome(options=options, version_main=150, headless=True)
+    # Using macOS, we don't strictly need headless=True if we use a display server, 
+    # but since it's GitHub we use standard background mode
+    driver = uc.Chrome(options=options, version_main=150)
     
-    # Apply advanced selenium-stealth masking for macOS
     stealth(driver,
         languages=["en-US", "en"],
         vendor="Google Inc.",
@@ -118,12 +169,8 @@ def run_stealth_automation():
         fix_hairline=True,
     )
 
-    # Strip the remaining Selenium variables
     driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
-        "source": """
-            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-            window.chrome = { runtime: {} };
-        """
+        "source": "Object.defineProperty(navigator, 'webdriver', { get: () => undefined }); window.chrome = { runtime: {} };"
     })
 
     wait = WebDriverWait(driver, 20)
@@ -134,7 +181,6 @@ def run_stealth_automation():
         driver.get(TARGET_URL)
         human_like_delay(5, 7)
 
-        # Scroll slightly to look human
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight/4);")
         human_like_delay(1, 2)
 
@@ -147,7 +193,12 @@ def run_stealth_automation():
         """)
         human_like_delay(2, 4)
 
-        # 1. ENTER EMAIL
+        # Clear popups
+        driver.execute_script("""
+            let overlays = document.querySelectorAll('[id*="pi-tour-mask"], [class*="tour-mask"], [class*="overlay"]');
+            overlays.forEach(el => el.remove());
+        """)
+
         print("Waiting for Email input field...")
         email_field = wait.until(EC.presence_of_element_located((
             By.XPATH, "//input[@type='email'] | //input[contains(@placeholder, 'Email') or contains(@placeholder, 'email')]"
@@ -163,7 +214,6 @@ def run_stealth_automation():
         actions.move_to_element(next_btn_email).pause(0.5).click().perform()
         human_like_delay(3, 4)
 
-        # 2. ENTER PASSWORD
         print("Waiting for Password input fields...")
         password_input = wait.until(EC.presence_of_element_located((
             By.XPATH, "//input[@placeholder='Password'] | (//input[@type='password'])[1]"
@@ -191,7 +241,6 @@ def run_stealth_automation():
         print("Password form submitted! Polling inbox for verification email...")
         human_like_delay(4, 6)
 
-        # 3. POLL INBOX FOR CODE
         verification_code = None
         for attempt in range(MAX_POLLING_ATTEMPTS):
             time.sleep(POLLING_DELAY)
@@ -213,7 +262,6 @@ def run_stealth_automation():
         if not verification_code:
             raise Exception("Timeout waiting for verification email.")
 
-        # 4. ENTER VERIFICATION CODE
         print("Waiting for Verification Code input field...")
         code_input = wait.until(EC.presence_of_element_located((
             By.XPATH, "//input[@placeholder='Verification Code'] | //input[@type='text']"
