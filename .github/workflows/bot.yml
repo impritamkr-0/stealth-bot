@@ -1,33 +1,33 @@
 name: Run Stealth Bot
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # Allows manual trigger from the Actions tab
+  schedule:
+    - cron: '0 14 * * *' # Example: Runs automatically at 2:00 PM UTC daily
 
 jobs:
   run-automation:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest # This is the critical change for Method 1
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
 
       - name: Install Dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb x11-utils
-          pip install -r requirements.txt
+          pip install undetected-chromedriver selenium selenium-stealth requests fake-useragent
 
       - name: Run Bot Script
-        run: |
-          python stealth_bot.py
+        run: python stealth_bot.py
 
       - name: Upload Debug Screenshot
+        if: failure()
         uses: actions/upload-artifact@v4
-        if: always()
         with:
           name: bot-debug-screenshot
-          path: "*.png"
+          path: debug_error_visual_flow.png
