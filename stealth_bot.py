@@ -10,53 +10,10 @@ import string
 import re
 import requests
 import sys
-import os
-import zipfile
 
 TARGET_URL = "https://deepvincilimited.sjv.io/bkP2rv"
 POLLING_DELAY = 4  
 MAX_POLLING_ATTEMPTS = 45
-
-# Fetch Proxy details from GitHub Secrets
-PROXY_HOST = os.environ.get("PROXY_HOST")
-PROXY_PORT = os.environ.get("PROXY_PORT")
-PROXY_USER = os.environ.get("PROXY_USER")
-PROXY_PASS = os.environ.get("PROXY_PASS")
-
-def create_proxy_extension(proxy_host, proxy_port, proxy_user, proxy_pass):
-    """Dynamically builds a Chrome extension to handle proxy authentication."""
-    manifest_json = """
-    {
-        "version": "1.0.0",
-        "manifest_version": 2,
-        "name": "Chrome Proxy",
-        "permissions": ["proxy", "tabs", "unlimitedStorage", "storage", "<all_urls>", "webRequest", "webRequestBlocking"],
-        "background": {"scripts": ["background.js"]},
-        "minimum_chrome_version":"22.0.0"
-    }
-    """
-    background_js = """
-    var config = {
-            mode: "fixed_servers",
-            rules: {
-              singleProxy: { scheme: "http", host: "%s", port: parseInt(%s) },
-              bypassList: ["localhost"]
-            }
-          };
-    chrome.proxy.settings.set({value: config, scope: "regular"}, function() {});
-    function callbackFn(details) {
-        return { authCredentials: { username: "%s", password: "%s" } };
-    }
-    chrome.webRequest.onAuthRequired.addListener(
-            callbackFn, {urls: ["<all_urls>"]}, ['blocking']
-    );
-    """ % (proxy_host, proxy_port, proxy_user, proxy_pass)
-    
-    pluginfile = 'proxy_auth_plugin.zip'
-    with zipfile.ZipFile(pluginfile, 'w') as zp:
-        zp.writestr("manifest.json", manifest_json)
-        zp.writestr("background.js", background_js)
-    return pluginfile
 
 def human_like_delay(min_sec=1.5, max_sec=3.0):
     time.sleep(random.uniform(min_sec, max_sec))
@@ -147,17 +104,7 @@ def run_stealth_automation():
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--lang=en-US,en;q=0.9")
 
-    # Add the proxy extension if credentials exist
-    if PROXY_HOST and PROXY_PORT:
-        print(f"Loading Proxy: {PROXY_HOST}:{PROXY_PORT}")
-        proxy_plugin = create_proxy_extension(PROXY_HOST, PROXY_PORT, PROXY_USER, PROXY_PASS)
-        options.add_argument(f"--load-extension={os.path.abspath(proxy_plugin)}")
-    else:
-        print("WARNING: No Proxy found in environment variables. Running on standard GitHub IP.")
-
     print("Launching stealth Chrome...")
-    # Using macOS, we don't strictly need headless=True if we use a display server, 
-    # but since it's GitHub we use standard background mode
     driver = uc.Chrome(options=options, version_main=150)
     
     stealth(driver,
@@ -193,7 +140,6 @@ def run_stealth_automation():
         """)
         human_like_delay(2, 4)
 
-        # Clear popups
         driver.execute_script("""
             let overlays = document.querySelectorAll('[id*="pi-tour-mask"], [class*="tour-mask"], [class*="overlay"]');
             overlays.forEach(el => el.remove());
