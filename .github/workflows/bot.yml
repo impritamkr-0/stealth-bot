@@ -18,17 +18,21 @@ jobs:
         with:
           python-version: '3.11'
           
-      # --- NEW STEP: Install Google Chrome on the macOS runner ---
       - name: Setup Chrome
         uses: browser-actions/setup-chrome@v1
         with:
-          chrome-version: stable
+          chrome-version: 150
 
       - name: Install Dependencies
         run: |
           pip install undetected-chromedriver selenium selenium-stealth requests fake-useragent
 
       - name: Run Bot Script
+        env:
+          PROXY_HOST: ${{ secrets.PROXY_HOST }}
+          PROXY_PORT: ${{ secrets.PROXY_PORT }}
+          PROXY_USER: ${{ secrets.PROXY_USER }}
+          PROXY_PASS: ${{ secrets.PROXY_PASS }}
         run: python stealth_bot.py
 
       - name: Upload Debug Screenshot
