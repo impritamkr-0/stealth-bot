@@ -104,7 +104,7 @@ def run_stealth_automation():
     
     # We remove version_main so uc automatically detects the GitHub runner's Chrome version
     print("Launching stealth Chrome...")
-    driver = uc.Chrome(options=options)
+    driver = uc.Chrome(options=options, version_main=150)
     
     # Apply advanced selenium-stealth masking for macOS
     stealth(driver,
