@@ -1,4 +1,4 @@
-name: Run Stealth Bot
+name: Run Stealth Bot (WARP VPN)
 
 on:
   workflow_dispatch: 
@@ -17,6 +17,19 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
+      - name: Install Cloudflare WARP
+        run: |
+          brew install --cask cloudflare-warp
+          warp-cli --version
+
+      - name: Connect Cloudflare WARP
+        run: |
+          # Register and connect the free WARP tunnel
+          warp-cli registration new --accept-tos || true
+          warp-cli connect
+          sleep 5
+          warp-cli status
           
       - name: Setup Chrome
         uses: browser-actions/setup-chrome@v1
@@ -28,11 +41,6 @@ jobs:
           pip install undetected-chromedriver selenium selenium-stealth requests fake-useragent
 
       - name: Run Bot Script
-        env:
-          PROXY_HOST: ${{ secrets.PROXY_HOST }}
-          PROXY_PORT: ${{ secrets.PROXY_PORT }}
-          PROXY_USER: ${{ secrets.PROXY_USER }}
-          PROXY_PASS: ${{ secrets.PROXY_PASS }}
         run: python stealth_bot.py
 
       - name: Upload Debug Screenshot
