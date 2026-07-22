@@ -97,8 +97,7 @@ def run_stealth_automation():
         return
     print(f"Success! Got stealth email: {my_email}")
 
-    options = uc.ChromeOptions()
-    options.add_argument("--headless=new") 
+    options = uc.ChromeOptions() 
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-blink-features=AutomationControlled")
@@ -107,7 +106,7 @@ def run_stealth_automation():
     
     # We remove version_main so uc automatically detects the GitHub runner's Chrome version
     print("Launching stealth Chrome...")
-    driver = uc.Chrome(options=options, version_main=150)
+    driver = uc.Chrome(options=options, version_main=150, headless=True)
     
     # Apply advanced selenium-stealth masking for macOS
     stealth(driver,
