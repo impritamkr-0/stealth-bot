@@ -3,42 +3,34 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.action_chains import ActionChains
-from pyvirtualdisplay import Display
+from selenium_stealth import stealth
 import time
 import random
 import string
 import re
 import requests
-from fake_useragent import UserAgent
-import subprocess
 import sys
 
 TARGET_URL = "https://deepvincilimited.sjv.io/bkP2rv"
 POLLING_DELAY = 4  
 MAX_POLLING_ATTEMPTS = 45
 
-def get_chrome_major_version():
-    try:
-        output = subprocess.check_output(['google-chrome', '--version']).decode('utf-8')
-        return int(output.strip().split()[2].split('.')[0])
-    except Exception as e:
-        print(f"Failed to detect Chrome version: {e}")
-        return None
-
 def human_like_delay(min_sec=1.5, max_sec=3.0):
     time.sleep(random.uniform(min_sec, max_sec))
 
 def human_like_type(driver, element, text):
+    """Types characters one by one and triggers React validation events."""
     element.click()
     for char in text:
         element.send_keys(char)
         driver.execute_script("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));", element)
         time.sleep(random.uniform(0.1, 0.25))
     driver.execute_script("arguments[0].dispatchEvent(new Event('change', { bubbles: true }));", element)
+    driver.execute_script("arguments[0].dispatchEvent(new Event('blur', { bubbles: true }));", element)
 
 # --- MAIL.TM API ---
 API_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
     "Accept": "application/json"
 }
 
@@ -98,30 +90,40 @@ def extract_code_from_text(text_content):
     return None
 
 def run_stealth_automation():
-    print("Spinning up the Xvfb Ghost Monitor...")
-    display = Display(visible=0, size=(1920, 1080))
-    display.start()
-
     print("Generating temporary email via Mail.tm API...")
     my_email, api_token = create_mail_tm_account()
     if not my_email:
         print("Failed to generate email. Exiting.")
-        display.stop()
         return
     print(f"Success! Got stealth email: {my_email}")
 
-    ua = UserAgent()
     options = uc.ChromeOptions()
-    options.add_argument(f"--user-agent={ua.random}")
     options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--lang=en-US,en;q=0.9")
-
+    
+    # We remove version_main so uc automatically detects the GitHub runner's Chrome version
     print("Launching stealth Chrome...")
-    chrome_version = get_chrome_major_version()
-    driver = uc.Chrome(options=options, version_main=chrome_version) if chrome_version else uc.Chrome(options=options)
+    driver = uc.Chrome(options=options)
+    
+    # Apply advanced selenium-stealth masking for macOS
+    stealth(driver,
+        languages=["en-US", "en"],
+        vendor="Google Inc.",
+        platform="MacIntel",
+        webgl_vendor="Intel Inc.",
+        renderer="Intel Iris OpenGL Engine",
+        fix_hairline=True,
+    )
+
+    # Strip the remaining Selenium variables
+    driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+        "source": """
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            window.chrome = { runtime: {} };
+        """
+    })
+
     wait = WebDriverWait(driver, 20)
     actions = ActionChains(driver)
 
@@ -130,7 +132,7 @@ def run_stealth_automation():
         driver.get(TARGET_URL)
         human_like_delay(5, 7)
 
-        # Human-like interaction to bypass bot-detection heuristics
+        # Scroll slightly to look human
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight/4);")
         human_like_delay(1, 2)
 
@@ -172,17 +174,19 @@ def run_stealth_automation():
         print("Entering Password...")
         human_like_type(driver, password_input, secure_password)
         human_like_delay(0.5, 1.0)
+        
         print("Entering Confirm Password...")
         human_like_type(driver, confirm_input, secure_password)
         human_like_delay(1, 2)
 
         print("Clicking Next Step for password submission...")
-        next_btn_pass = wait.until(EC.element_to_be_clickable((
+        next_btn_pass = wait.until(EC.presence_of_element_located((
             By.XPATH, "//button[contains(translate(text(), 'NEXT STEP', 'next step'), 'next step')]"
         )))
+        
         driver.execute_script("arguments[0].removeAttribute('disabled');", next_btn_pass)
         actions.move_to_element(next_btn_pass).pause(0.5).click().perform()
-        print("Form submitted via human action simulation! Polling inbox for verification email...")
+        print("Password form submitted! Polling inbox for verification email...")
         human_like_delay(4, 6)
 
         # 3. POLL INBOX FOR CODE
@@ -229,13 +233,11 @@ def run_stealth_automation():
         print(f"Error encountered: {e}")
         try:
             driver.save_screenshot("debug_error_visual_flow.png")
-            print("Debug screenshot saved.")
         except Exception:
             pass
         sys.exit(1)
     finally:
         driver.quit()
-        display.stop()
 
 if __name__ == "__main__":
     run_stealth_automation()
