@@ -7,7 +7,7 @@ on:
 
 jobs:
   run-automation:
-    runs-on: macos-latest 
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Repository
@@ -18,34 +18,41 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Cloudflare WARP
+      - name: Install Google Chrome
         run: |
-          brew install --cask cloudflare-warp
-          warp-cli --version
+          sudo apt-get update
+          sudo apt-get install -y wget gnupg
+          wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+          sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list'
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable
 
-      - name: Connect Cloudflare WARP
+      - name: Install and Connect Cloudflare WARP
         run: |
-          # Register and connect the free WARP tunnel
-          warp-cli registration new --accept-tos || true
-          warp-cli connect
-          sleep 5
-          warp-cli status
+          curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | sudo gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflare-client.list
+          sudo apt-get update && sudo apt-get install -y cloudflare-warp
           
-      - name: Setup Chrome
-        uses: browser-actions/setup-chrome@v1
-        with:
-          chrome-version: 150
+          # Register and start WARP service non-interactively
+          warp-cli --accept-tos registration new || true
+          warp-cli --accept-tos connect
+          sleep 5
+          warp-cli --accept-tos status || true
 
-      - name: Install Dependencies
+      - name: Install Python Dependencies
         run: |
-          pip install undetected-chromedriver selenium selenium-stealth requests fake-useragent
+          python -m pip install --upgrade pip
+          pip install undetected-chromedriver selenium selenium-stealth requests
 
       - name: Run Bot Script
+        env:
+          GITHUB_ACTIONS: "true"
         run: python stealth_bot.py
 
-      - name: Upload Debug Screenshot
+      - name: Upload Debug Screenshot on Failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: bot-debug-screenshot
           path: debug_error_visual_flow.png
+          if-no-files-found: ignore
