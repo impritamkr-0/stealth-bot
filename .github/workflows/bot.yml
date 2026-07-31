@@ -26,44 +26,32 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq google-chrome-stable
 
-      - name: Setup VPN (Optional)
-        continue-on-error: true
+      - name: Setup Webshare Proxy
         run: |
-          echo "Attempting VPN setup..."
-          # Try OpenVPN (more reliable)
-          sudo apt-get install -y openvpn || echo "OpenVPN not available"
-          echo "VPN setup completed (may have failed)"
+          echo "Configuring proxy..."
+          # Add your Webshare proxy here or use GitHub Secret
+          # Format: ip:port:username:password for authenticated proxies
+          # Or ip:port for open proxies
 
       - name: Download Buster Extension
         run: |
           echo "Downloading Buster..."
-          # Use GitHub releases API to get latest
           LATEST_URL=$(curl -s https://api.github.com/repos/dessant/buster/releases/latest | grep "browser_download_url.*chrome.*zip" | head -1 | cut -d '"' -f 4)
           
-          # If API fails, use hardcoded fallback
           if [ -z "$LATEST_URL" ]; then
-            echo "Using fallback URL..."
             LATEST_URL="https://github.com/dessant/buster/releases/download/v3.1.0/buster-chrome-3.1.0.zip"
           fi
           
-          echo "Downloading from: $LATEST_URL"
-          
-          # Download with retry
           wget --tries=3 --timeout=30 -q "$LATEST_URL" -O /tmp/buster.zip || \
           wget --tries=3 --timeout=30 -q "https://github.com/dessant/buster/releases/download/v3.1.0/buster-chrome-3.1.0.zip" -O /tmp/buster.zip
           
-          if [ ! -f "/tmp/buster.zip" ]; then
-            echo "Failed to download Buster, continuing without..."
+          if [ -f "/tmp/buster.zip" ]; then
+            sudo mkdir -p /opt/buster
+            sudo unzip -q -o /tmp/buster.zip -d /opt/buster
+            ls -la /opt/buster/
+          else
             mkdir -p /opt/buster
-            exit 0
           fi
-          
-          # Extract
-          sudo mkdir -p /opt/buster
-          sudo unzip -q -o /tmp/buster.zip -d /opt/buster
-          
-          echo "Extension contents:"
-          ls -la /opt/buster/ || echo "Directory listing failed"
 
       - name: Install Python Dependencies
         run: |
@@ -75,6 +63,7 @@ jobs:
           GITHUB_ACTIONS: "true"
           BUSTER_PATH: "/opt/buster"
           PYTHONUNBUFFERED: "1"
+          PROXY_URL: ${{ secrets.PROXY_URL }}
         run: python stealth_bot.py
 
       - name: Upload Results
