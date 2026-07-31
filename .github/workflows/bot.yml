@@ -1,116 +1,131 @@
-name: Run Stealth Bot (Windscribe + Buster)
+name: Run Stealth Bot
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 */6 * * *'  # Every 6 hours for fresh IP
+    - cron: '0 */6 * * *'
 
 jobs:
-  run-automation:
+  run-bot:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Checkout Repository
+      - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install System Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y wget gnupg curl unzip apt-transport-https ca-certificates
-
-      - name: Install Google Chrome
+      - name: Install Chrome
         run: |
           wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
           sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list'
           sudo apt-get update
           sudo apt-get install -y google-chrome-stable
+          google-chrome --version
 
-      - name: Install and Connect Windscribe VPN
+      - name: Setup Windscribe VPN (with fallback)
+        continue-on-error: true
         run: |
-          # Install Windscribe
-          sudo apt-get install -y windscribe-cli || (
-            curl -fsSL https://windscribe.com/install/desktop/linux_deb_x64 > /tmp/windscribe.deb
-            sudo dpkg -i /tmp/windscribe.deb || sudo apt-get install -f -y
-          )
+          echo "Attempting to setup Windscribe..."
           
-          # Login
-          windscribe login <<EOF
-          ${{ secrets.mandymild }}
-          ${{ secrets.irIR12@$ }}
+          # Try to install Windscribe
+          sudo apt-get install -y windscribe-cli 2>/dev/null || {
+            echo "Trying alternative install method..."
+            curl -fsSL https://windscribe.com/install/desktop/linux_deb_x64 > /tmp/windscribe.deb 2>/dev/null
+            sudo dpkg -i /tmp/windscribe.deb 2>/dev/null || sudo apt-get install -f -y
+          }
+          
+          # Check if installed
+          which windscribe || echo "Windscribe not installed, continuing without VPN"
+          
+          # Try to login if credentials exist
+          if [ -n "${{ secrets.WINDSCRIBE_USERNAME }}" ] && command -v windscribe &> /dev/null; then
+            echo "Logging into Windscribe..."
+            windscribe login <<EOF
+          ${{ secrets.WINDSCRIBE_USERNAME }}
+          ${{ secrets.WINDSCRIBE_PASSWORD }}
           EOF
-          
-          # Connect to best location
-          windscribe connect best
-          sleep 5
-          
-          # Verify IP changed
-          echo "Connected! IP:"
-          curl -s https://ipinfo.io/ip
+            
+            windscribe connect best
+            sleep 5
+            echo "IP after VPN:"
+            curl -s https://ipinfo.io/ip || echo "Could not get IP"
+          else
+            echo "No Windscribe credentials or not installed, using direct connection"
+            echo "IP:"
+            curl -s https://ipinfo.io/ip
+          fi
 
-      - name: Download and Setup Buster Extension
+      - name: Download Buster Extension
         run: |
-          # Get latest Buster release URL
-          BUSTER_URL=$(curl -s https://api.github.com/repos/dessant/buster/releases/latest | \
-            grep "browser_download_url.*chrome-web-store.*\.zip" | cut -d '"' -f 4)
+          echo "Downloading Buster..."
           
-          # If not found, try alternative
+          # Try to get latest release URL
+          BUSTER_URL=$(curl -s https://api.github.com/repos/dessant/buster/releases/latest | \
+            grep "browser_download_url.*\.zip" | head -1 | cut -d '"' -f 4)
+          
+          # Fallback URL if API fails
           if [ -z "$BUSTER_URL" ]; then
             BUSTER_URL="https://github.com/dessant/buster/releases/download/v3.1.0/buster-chrome-3.1.0.zip"
           fi
           
-          echo "Downloading Buster from: $BUSTER_URL"
-          wget -q "$BUSTER_URL" -O /tmp/buster.zip
+          echo "Downloading from: $BUSTER_URL"
+          wget -q "$BUSTER_URL" -O /tmp/buster.zip || {
+            echo "Failed to download Buster, trying direct link..."
+            wget -q "https://github.com/dessant/buster/releases/download/v3.1.0/buster-chrome-3.1.0.zip" -O /tmp/buster.zip
+          }
           
-          # Extract
+          echo "Extracting Buster..."
           sudo mkdir -p /opt/buster
-          sudo unzip -q /tmp/buster.zip -d /opt/buster
+          sudo unzip -o /tmp/buster.zip -d /opt/buster
           
-          # List contents
-          echo "Buster contents:"
+          echo "Buster directory contents:"
           ls -la /opt/buster/
           
-          # Verify manifest exists
+          # Check for manifest
           if [ -f "/opt/buster/manifest.json" ]; then
-            echo "✓ Buster extension ready"
+            echo "✓ Buster ready (manifest found)"
+          elif [ -f "/opt/buster/*/manifest.json" ]; then
+            echo "✓ Buster found in subdirectory"
+            # Move files up if needed
+            sudo mv /opt/buster/*/* /opt/buster/ 2>/dev/null || true
           else
-            echo "! manifest.json not found, checking subdirectories..."
-            find /opt/buster -name "manifest.json" | head -1
+            echo "⚠ Buster manifest not found, searching..."
+            find /opt/buster -name "manifest.json" 2>/dev/null || echo "No manifest found"
           fi
 
-      - name: Install Python Dependencies
+      - name: Install Python Packages
         run: |
-          python -m pip install --upgrade pip
+          pip install --upgrade pip
           pip install undetected-chromedriver selenium selenium-stealth requests
 
       - name: Run Bot
         env:
           GITHUB_ACTIONS: "true"
           BUSTER_PATH: "/opt/buster"
+          PYTHONUNBUFFERED: "1"
         run: |
-          echo "Starting bot with Windscribe + Buster..."
-          python stealth_bot.py
+          echo "=== Starting Bot ==="
+          python stealth_bot.py || {
+            echo "Bot failed with exit code $?"
+            exit 1
+          }
 
-      - name: Disconnect VPN
+      - name: Cleanup VPN
         if: always()
-        run: windscribe disconnect || true
+        continue-on-error: true
+        run: |
+          command -v windscribe &> /dev/null && windscribe disconnect || true
 
-      - name: Upload Screenshots
+      - name: Upload All Artifacts
+        if: always()
         uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: bot-screenshots
-          path: screenshot_*.png
-          if-no-files-found: ignore
-
-      - name: Upload Credentials
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: account-credentials
-          path: account_credentials.txt
+          name: bot-results
+          path: |
+            screenshot_*.png
+            account_credentials.txt
           if-no-files-found: ignore
