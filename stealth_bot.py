@@ -4,7 +4,7 @@ import time
 import random
 import string
 import tempfile
-import subprocess
+import re
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -34,11 +34,12 @@ def generate_random_email():
     return f"{username}@{random.choice(domains)}"
 
 def generate_strong_password():
+    """Generates a 16-character password guaranteed to satisfy all strict criteria."""
     upper = random.choice(string.ascii_uppercase)
     lower = random.choice(string.ascii_lowercase)
     digit = random.choice(string.digits)
-    special = random.choice("!@#$%^&*")
-    remaining = ''.join(random.choice(string.ascii_letters + string.digits + "!@#$%^&*") for _ in range(8))
+    special = random.choice("!@#$%^&*-_=")
+    remaining = ''.join(random.choice(string.ascii_letters + string.digits + "!@#$%^&*-_=") for _ in range(12))
     password = upper + lower + digit + special + remaining
     return ''.join(random.sample(password, len(password)))
 
@@ -145,7 +146,7 @@ def create_proxy_auth_extension(proxy_str):
         elif clean_proxy.count(":") == 3:
             host, port, user, password = clean_proxy.split(":", 3)
         else:
-            log("Proxy format unauthenticated or unrecognized.")
+            log("Proxy format unauthenticated or unrecognized (no user/pass found).")
             return None
         
         manifest_json = """
@@ -252,14 +253,20 @@ def launch_driver():
         # 1. First attempt: Launch directly with the detected version (e.g. 150)
         return uc.Chrome(options=build_chrome_options(), version_main=major_ver)
     except Exception as e:
-        log(f"Launch with version_main={major_ver} failed: {e}")
-        log("Retrying fallback launch with a FRESH ChromeOptions object...")
-        try:
-            # 2. Second attempt: Create a brand new options object so Selenium doesn't throw a reuse error
-            return uc.Chrome(options=build_chrome_options())
-        except Exception as e2:
-            log(f"Fallback launch failed: {e2}")
-            return None
+        err_msg = str(e)
+        log(f"Default launch failed: {err_msg}")
+        
+        # 2. If ChromeDriver version mismatch occurs, extract browser version from error message
+        match = re.search(r"Current browser version is (\d+)", err_msg)
+        if match:
+            major_ver = int(match.group(1))
+            log(f"Detected mismatch! Forcing version_main={major_ver} to match browser...")
+            try:
+                return uc.Chrome(options=build_chrome_options(), version_main=major_ver)
+            except Exception as e2:
+                log(f"Retry with version_main={major_ver} failed: {e2}")
+                return None
+        return None
 
 def run_bot():
     log("=" * 60)
@@ -322,8 +329,8 @@ def run_bot():
             
             # 1. Detect Chrome internal Proxy/Network Connection Errors immediately
             if "err_tunnel_connection_failed" in page_lower or "err_proxy_connection_failed" in page_lower or "net-error" in page_lower or "chrome://net-error" in page_lower:
-                log("CRITICAL ERROR: Proxy authentication rejected or tunnel failed! (ERR_TUNNEL_CONNECTION_FAILED / ERR_PROXY_CONNECTION_FAILED)")
-                raise Exception("Proxy Authentication Failed or Bad Proxy IP. Verify GitHub Secret formatting: username:password@ip:port")
+                log("CRITICAL ERROR: Proxy authentication rejected or tunnel failed!")
+                raise Exception("Proxy Authentication Failed or Bad Proxy IP.")
             
             # 2. Check if stuck on a Cloudflare challenge screen
             if "just a moment" in driver.title.lower() or "challenge" in page_lower or "turnstile" in page_lower:
@@ -358,15 +365,19 @@ def run_bot():
         log("Email filled")
         time.sleep(1)
         
-        pass_fields = driver.find_elements(By.XPATH, "//input[@type='password']")
-        if len(pass_fields) >= 2:
+        # Bulletproof Password Filling (handles 1 or 2 password fields cleanly)
+        log("Looking for password fields...")
+        pass_fields = driver.find_elements(By.XPATH, "//input[@type='password' or contains(translate(@name, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'password')]")
+        
+        if len(pass_fields) >= 1:
             smart_fill_field(driver, pass_fields[0], password)
-            log("Password filled")
+            log("Primary password filled")
             time.sleep(0.5)
-            smart_fill_field(driver, pass_fields[1], password)
-            log("Confirm password filled")
+            if len(pass_fields) >= 2:
+                smart_fill_field(driver, pass_fields[1], password)
+                log("Confirm password filled")
         else:
-            log(f"Warning: Found {len(pass_fields)} password field(s)")
+            log("WARNING: Could not find any password input fields!")
         
         try:
             for cb in driver.find_elements(By.XPATH, "//input[@type='checkbox']"):
