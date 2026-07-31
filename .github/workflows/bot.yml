@@ -42,7 +42,7 @@ jobs:
           # 3. Final Fallback: Download CRX directly from Google Chrome Web Store
           if [ ! -s "/tmp/nopecha.zip" ]; then
             echo "Fetching from Chrome Web Store..."
-            wget --tries=3 --timeout=25 -q "https://github.com/clients2.google.com/service/update2/crx?response=redirect&prodversion=130.0&acceptformat=crx2,crx3&x=id%3Ddknlfmjaanfblgfdfebhijalfmhmjjjo%26uc" -O /tmp/nopecha.zip || true
+            wget --tries=3 --timeout=25 -q "https://clients2.google.com/service/update2/crx?response=redirect&prodversion=130.0&acceptformat=crx2,crx3&x=id%3Ddknlfmjaanfblgfdfebhijalfmhmjjjo%26uc" -O /tmp/nopecha.zip || true
           fi
           
           # Unpack cleanly into /opt/nopecha
