@@ -99,82 +99,69 @@ def click_submit_button(driver, final=False):
             continue
     return False
 
-def check_for_captcha(driver):
-    try:
-        return len(driver.find_elements(By.XPATH, "//iframe[contains(@src, 'recaptcha')]")) > 0
-    except:
-        return False
-
-def solve_captcha_with_free_nopecha(driver, max_wait=35):
-    """Interacts with reCAPTCHA checkbox via JS and waits for Free-Tier NopeCHA without triggering audio block."""
-    if not check_for_captcha(driver):
-        return True
-    log("reCAPTCHA widget detected! Attempting JS click on checkbox...")
+def solve_captcha_with_free_nopecha(driver, max_wait=45):
+    """
+    Waits for visual challenge popup (bframe) after form submission
+    and triggers NopeCHA's visual solver button.
+    """
+    log("Checking for CAPTCHA image challenge popup...")
+    start_time = time.time()
     
-    try:
-        iframes = driver.find_elements(By.TAG_NAME, "iframe")
-        for iframe in iframes:
-            src = iframe.get_attribute("src") or ""
-            if "recaptcha" in src and "anchor" in src:
-                driver.switch_to.frame(iframe)
-                try:
-                    checkbox = driver.find_element(By.ID, "recaptcha-anchor")
-                    # Use direct JavaScript click to guarantee interaction
-                    driver.execute_script("arguments[0].click();", checkbox)
-                    log("Clicked reCAPTCHA checkbox via JS")
-                except Exception as e:
-                    log(f"Checkbox click warning: {e}")
-                driver.switch_to.default_content()
-                break
-    except Exception as e:
-        driver.switch_to.default_content()
-        log(f"reCAPTCHA frame error: {e}")
-        
-    time.sleep(3)
-    
-    # Check if visual challenge popup opened and look for NopeCHA solve button
-    try:
-        iframes = driver.find_elements(By.TAG_NAME, "iframe")
-        for iframe in iframes:
-            src = iframe.get_attribute("src") or ""
-            if "recaptcha" in src and ("bframe" in src or "challenge" in src):
-                driver.switch_to.frame(iframe)
-                log("Switched to reCAPTCHA challenge popup frame")
-                time.sleep(2)
-                try:
-                    # Click NopeCHA visual solver button if present inside iframe
-                    nopecha_btn = driver.find_element(By.XPATH, "//*[@id='solver-button' or contains(@class, 'nopecha') or contains(@title, 'Solve')]")
-                    driver.execute_script("arguments[0].click();", nopecha_btn)
-                    log("Clicked NopeCHA visual solver button!")
-                except:
-                    log("NopeCHA button not immediately clickable; waiting for automatic solve...")
-                driver.switch_to.default_content()
-                break
-    except:
-        driver.switch_to.default_content()
-
-    log(f"Waiting up to {max_wait}s for NopeCHA to solve visually...")
-    for step in range(int(max_wait / 3)):
-        time.sleep(3)
-        if not check_for_captcha(driver):
-            log("CAPTCHA cleared successfully!")
-            return True
+    while time.time() - start_time < max_wait:
         try:
+            # 1. Find all iframes and look for the active reCAPTCHA challenge 'bframe'
             iframes = driver.find_elements(By.TAG_NAME, "iframe")
+            challenge_frame = None
             for iframe in iframes:
                 src = iframe.get_attribute("src") or ""
-                if "recaptcha" in src and "anchor" in src:
-                    driver.switch_to.frame(iframe)
-                    anchor = driver.find_element(By.ID, "recaptcha-anchor")
-                    checked = anchor.get_attribute("aria-checked")
-                    driver.switch_to.default_content()
-                    if checked == "true":
-                        log("reCAPTCHA verified!")
-                        return True
-        except:
+                title = (iframe.get_attribute("title") or "").lower()
+                if "recaptcha" in src and ("bframe" in src or "challenge" in src or "recaptcha challenge" in title):
+                    if iframe.is_displayed():
+                        challenge_frame = iframe
+                        break
+            
+            # If no visible challenge frame is present, CAPTCHA is either solved or not triggered yet
+            if not challenge_frame:
+                time.sleep(2)
+                continue
+
+            log("Challenge popup detected! Switching to challenge frame...")
+            driver.switch_to.frame(challenge_frame)
+            time.sleep(2)
+
+            # 2. Look for NopeCHA solver button inside the challenge frame
+            try:
+                nopecha_btn = WebDriverWait(driver, 5).until(
+                    EC.element_to_be_clickable((By.ID, "solver-button"))
+                )
+                driver.execute_script("arguments[0].click();", nopecha_btn)
+                log("Clicked NopeCHA visual solver button! Waiting for solution...")
+            except:
+                try:
+                    alt_btn = driver.find_element(By.XPATH, "//*[contains(@class, 'nopecha') or contains(@title, 'Solve')]")
+                    driver.execute_script("arguments[0].click();", alt_btn)
+                    log("Clicked alternate NopeCHA solver button...")
+                except:
+                    log("NopeCHA button not found yet, waiting...")
+
             driver.switch_to.default_content()
             
-    log("CAPTCHA wait finished.")
+            # 3. Wait for the challenge iframe to disappear (meaning it was solved)
+            for _ in range(15):
+                time.sleep(2)
+                visible_challenges = [
+                    f for f in driver.find_elements(By.TAG_NAME, "iframe")
+                    if "bframe" in (f.get_attribute("src") or "") and f.is_displayed()
+                ]
+                if not visible_challenges:
+                    log("CAPTCHA challenge cleared successfully!")
+                    return True
+
+        except Exception as e:
+            driver.switch_to.default_content()
+            time.sleep(2)
+
+    log("CAPTCHA challenge wait completed.")
     return False
 
 def create_proxy_auth_extension(proxy_str):
@@ -419,30 +406,28 @@ def run_bot():
         if is_github:
             driver.save_screenshot("screenshot_02_filled.png")
         
-        # Check and attempt to solve visual CAPTCHA before initial submit (No audio button)
-        solve_captcha_with_free_nopecha(driver, max_wait=20)
-        time.sleep(2)
-        
-        log("Submitting form...")
+        # 1. Click Create Account FIRST to trigger the visual challenge
+        log("Submitting form to trigger CAPTCHA challenge...")
         click_submit_button(driver)
-        time.sleep(8)
+        time.sleep(3)
         
         if is_github:
             driver.save_screenshot("screenshot_03_submitted.png")
         
-        if check_for_captcha(driver):
-            log("CAPTCHA challenge detected after submit!")
-            solve_captcha_with_free_nopecha(driver, max_wait=30)
-            time.sleep(3)
-            if is_github:
-                driver.save_screenshot("screenshot_04_captcha.png")
-        
-        log("Final submission...")
+        # 2. Handle the pop-up CAPTCHA image challenge
+        log("Waiting for and solving pop-up CAPTCHA challenge...")
+        solve_captcha_with_free_nopecha(driver, max_wait=45)
         time.sleep(3)
-        for i in range(3):
+        
+        if is_github:
+            driver.save_screenshot("screenshot_04_captcha_solved.png")
+        
+        # 3. Check if final submission click is needed
+        log("Checking if final submission click is needed...")
+        for _ in range(2):
             if click_submit_button(driver, final=True):
+                time.sleep(5)
                 break
-            time.sleep(3)
         
         time.sleep(10)
         if is_github:
