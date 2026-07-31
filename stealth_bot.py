@@ -19,7 +19,6 @@ def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
 def get_chrome_major_version():
-    """Detects installed major Google Chrome version cleanly."""
     try:
         output = subprocess.check_output(['google-chrome', '--version'], text=True)
         version_str = output.strip().split()[-1]
@@ -36,7 +35,6 @@ def generate_random_email():
     return f"{username}@{random.choice(domains)}"
 
 def generate_strong_password():
-    """Generates a 16-character password guaranteed to satisfy all strict criteria."""
     upper = random.choice(string.ascii_uppercase)
     lower = random.choice(string.ascii_lowercase)
     digit = random.choice(string.digits)
@@ -54,7 +52,6 @@ def wait_for_element(driver, by, value, timeout=20):
         return None
 
 def human_type(element, text):
-    """Simulates realistic human typing speed to lower bot detection scores."""
     element.clear()
     for char in text:
         element.send_keys(char)
@@ -76,40 +73,36 @@ def smart_fill_field(driver, element, text):
 
 def click_submit_button(driver, final=False):
     selectors = [
-        "//button[contains(text(), 'Create account')]",
-        "//button[contains(text(), 'Create Account')]",
+        "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'create account')]",
+        "//input[@type='submit']",
         "//button[@type='submit']",
-        "//button[contains(@class, 'btn-primary')]",
+        "//button[contains(@class, 'btn-primary')]"
     ]
-    if final:
-        selectors = ["//button[contains(text(), 'Create account')]"] + selectors
-    
     for selector in selectors:
         try:
-            btn = WebDriverWait(driver, 4).until(
-                EC.element_to_be_clickable((By.XPATH, selector))
+            btn = WebDriverWait(driver, 5).until(
+                EC.presence_of_element_located((By.XPATH, selector))
             )
+            # Scroll to center so overlays don't block the button
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
+            time.sleep(1)
             try:
                 ActionChains(driver).move_to_element(btn).pause(random.uniform(0.2, 0.5)).click().perform()
             except:
                 driver.execute_script("arguments[0].click();", btn)
-            log("Submit button clicked")
+            log(f"Submit button clicked using selector: {selector}")
             return True
         except:
             continue
+    log("ERROR: Could not click any Create Account button!")
     return False
 
 def solve_captcha_with_free_nopecha(driver, max_wait=45):
-    """
-    Waits for visual challenge popup (bframe) after form submission
-    and triggers NopeCHA's visual solver button.
-    """
     log("Checking for CAPTCHA image challenge popup...")
     start_time = time.time()
     
     while time.time() - start_time < max_wait:
         try:
-            # 1. Find all iframes and look for the active reCAPTCHA challenge 'bframe'
             iframes = driver.find_elements(By.TAG_NAME, "iframe")
             challenge_frame = None
             for iframe in iframes:
@@ -120,7 +113,6 @@ def solve_captcha_with_free_nopecha(driver, max_wait=45):
                         challenge_frame = iframe
                         break
             
-            # If no visible challenge frame is present, CAPTCHA is either solved or not triggered yet
             if not challenge_frame:
                 time.sleep(2)
                 continue
@@ -129,7 +121,6 @@ def solve_captcha_with_free_nopecha(driver, max_wait=45):
             driver.switch_to.frame(challenge_frame)
             time.sleep(2)
 
-            # 2. Look for NopeCHA solver button inside the challenge frame
             try:
                 nopecha_btn = WebDriverWait(driver, 5).until(
                     EC.element_to_be_clickable((By.ID, "solver-button"))
@@ -146,7 +137,6 @@ def solve_captcha_with_free_nopecha(driver, max_wait=45):
 
             driver.switch_to.default_content()
             
-            # 3. Wait for the challenge iframe to disappear (meaning it was solved)
             for _ in range(15):
                 time.sleep(2)
                 visible_challenges = [
@@ -291,6 +281,59 @@ def launch_driver():
                 return None
         return None
 
+def navigate_via_affiliate_and_menu(driver):
+    """Navigates to TARGET_URL first, then clicks My Account -> New Account."""
+    log(f"Loading affiliate link: {TARGET_URL}")
+    driver.get(TARGET_URL)
+    time.sleep(5)
+    
+    # 1. Click 'My account' / Account icon in the top right
+    log("Looking for 'My account' menu in top right...")
+    account_selectors = [
+        "//a[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'my account')]",
+        "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'my account')]",
+        "//a[contains(@href, '/login') or contains(@href, '/account')]",
+        "//*[contains(@class, 'account') or contains(@class, 'user')]/a"
+    ]
+    clicked_account = False
+    for sel in account_selectors:
+        try:
+            btn = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.XPATH, sel)))
+            driver.execute_script("arguments[0].click();", btn)
+            log(f"Clicked My Account menu using: {sel}")
+            clicked_account = True
+            time.sleep(3)
+            break
+        except:
+            continue
+            
+    if not clicked_account:
+        log("WARNING: Could not click 'My account' menu directly. Continuing...")
+
+    # 2. Click 'New account' / 'Create account' link
+    log("Looking for 'New account' / 'Create account' option...")
+    new_account_selectors = [
+        "//a[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'new account')]",
+        "//a[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'create account')]",
+        "//a[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'sign up')]",
+        "//a[contains(@href, 'createNewAccount')]"
+    ]
+    for sel in new_account_selectors:
+        try:
+            btn = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.XPATH, sel)))
+            driver.execute_script("arguments[0].click();", btn)
+            log(f"Clicked New Account option using: {sel}")
+            time.sleep(3)
+            return True
+        except:
+            continue
+
+    # Fallback if dropdown didn't open or link wasn't found
+    log("Fallback: Directing to createNewAccount URL while keeping affiliate cookies...")
+    driver.get("https://my.eurodns.com/login/createNewAccount")
+    time.sleep(4)
+    return True
+
 def run_bot():
     log("=" * 60)
     log("EURODNS BOT STARTING")
@@ -339,8 +382,8 @@ def run_bot():
     driver.implicitly_wait(5)
     
     try:
-        log("Loading registration page...")
-        driver.get("https://my.eurodns.com/login/createNewAccount")
+        # Navigate via Affiliate link -> My account -> New account
+        navigate_via_affiliate_and_menu(driver)
         
         log("Waiting for DOM to render...")
         email_field = None
