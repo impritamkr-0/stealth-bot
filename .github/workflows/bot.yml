@@ -5,9 +5,11 @@ on:
   schedule:
     - cron: '0 */6 * * *'
 
+# Add timeout to prevent hanging
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+    timeout-minutes: 10  # Force kill after 10 minutes
     
     steps:
       - name: Checkout Code
@@ -19,112 +21,54 @@ jobs:
           python-version: '3.11'
 
       - name: Install Chrome
+        timeout-minutes: 2
         run: |
           wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
           sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list'
-          sudo apt-get update
-          sudo apt-get install -y google-chrome-stable
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq google-chrome-stable
           google-chrome --version
 
-      - name: Setup Windscribe VPN (with fallback)
+      - name: Setup VPN (ProtonVPN - More Reliable)
+        timeout-minutes: 2
         continue-on-error: true
         run: |
-          echo "Attempting to setup Windscribe..."
-          
-          # Try to install Windscribe
-          sudo apt-get install -y windscribe-cli 2>/dev/null || {
-            echo "Trying alternative install method..."
-            curl -fsSL https://windscribe.com/install/desktop/linux_deb_x64 > /tmp/windscribe.deb 2>/dev/null
-            sudo dpkg -i /tmp/windscribe.deb 2>/dev/null || sudo apt-get install -f -y
-          }
-          
-          # Check if installed
-          which windscribe || echo "Windscribe not installed, continuing without VPN"
-          
-          # Try to login if credentials exist
-          if [ -n "${{ secrets.WINDSCRIBE_USERNAME }}" ] && command -v windscribe &> /dev/null; then
-            echo "Logging into Windscribe..."
-            windscribe login <<EOF
-          ${{ secrets.mandymild }}
-          ${{ secrets.irIR12@$ }}
-          EOF
-            
-            windscribe connect best
-            sleep 5
-            echo "IP after VPN:"
-            curl -s https://ipinfo.io/ip || echo "Could not get IP"
-          else
-            echo "No Windscribe credentials or not installed, using direct connection"
-            echo "IP:"
-            curl -s https://ipinfo.io/ip
-          fi
+          # Try ProtonVPN (more reliable CLI than Windscribe)
+          wget -q https://repo.protonvpn.com/debian/dists/stable/main/binary-all/protonvpn-stable-release_1.0.3_all.deb -O /tmp/proton.deb
+          sudo dpkg -i /tmp/proton.deb || true
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq protonvpn-cli || echo "VPN install failed, continuing without"
 
-      - name: Download Buster Extension
+      - name: Download Buster
+        timeout-minutes: 2
         run: |
-          echo "Downloading Buster..."
+          # Direct download with fallback
+          wget -q "https://github.com/dessant/buster/releases/download/v3.1.0/buster-chrome-3.1.0.zip" -O /tmp/buster.zip || \
+          wget -q "https://github.com/dessant/buster/releases/latest/download/buster-chrome.zip" -O /tmp/buster.zip
           
-          # Try to get latest release URL
-          BUSTER_URL=$(curl -s https://api.github.com/repos/dessant/buster/releases/latest | \
-            grep "browser_download_url.*\.zip" | head -1 | cut -d '"' -f 4)
-          
-          # Fallback URL if API fails
-          if [ -z "$BUSTER_URL" ]; then
-            BUSTER_URL="https://github.com/dessant/buster/releases/download/v3.1.0/buster-chrome-3.1.0.zip"
-          fi
-          
-          echo "Downloading from: $BUSTER_URL"
-          wget -q "$BUSTER_URL" -O /tmp/buster.zip || {
-            echo "Failed to download Buster, trying direct link..."
-            wget -q "https://github.com/dessant/buster/releases/download/v3.1.0/buster-chrome-3.1.0.zip" -O /tmp/buster.zip
-          }
-          
-          echo "Extracting Buster..."
           sudo mkdir -p /opt/buster
-          sudo unzip -o /tmp/buster.zip -d /opt/buster
-          
-          echo "Buster directory contents:"
+          sudo unzip -q -o /tmp/buster.zip -d /opt/buster
           ls -la /opt/buster/
-          
-          # Check for manifest
-          if [ -f "/opt/buster/manifest.json" ]; then
-            echo "✓ Buster ready (manifest found)"
-          elif [ -f "/opt/buster/*/manifest.json" ]; then
-            echo "✓ Buster found in subdirectory"
-            # Move files up if needed
-            sudo mv /opt/buster/*/* /opt/buster/ 2>/dev/null || true
-          else
-            echo "⚠ Buster manifest not found, searching..."
-            find /opt/buster -name "manifest.json" 2>/dev/null || echo "No manifest found"
-          fi
 
-      - name: Install Python Packages
+      - name: Install Dependencies
+        timeout-minutes: 2
         run: |
-          pip install --upgrade pip
-          pip install undetected-chromedriver selenium selenium-stealth requests
+          pip install -q --upgrade pip
+          pip install -q undetected-chromedriver selenium selenium-stealth requests
 
       - name: Run Bot
+        timeout-minutes: 5  # Bot has max 5 minutes
         env:
           GITHUB_ACTIONS: "true"
           BUSTER_PATH: "/opt/buster"
           PYTHONUNBUFFERED: "1"
-        run: |
-          echo "=== Starting Bot ==="
-          python stealth_bot.py || {
-            echo "Bot failed with exit code $?"
-            exit 1
-          }
+        run: python stealth_bot.py
 
-      - name: Cleanup VPN
-        if: always()
-        continue-on-error: true
-        run: |
-          command -v windscribe &> /dev/null && windscribe disconnect || true
-
-      - name: Upload All Artifacts
+      - name: Upload Results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: bot-results
+          name: bot-results-${{ github.run_id }}
           path: |
             screenshot_*.png
             account_credentials.txt
