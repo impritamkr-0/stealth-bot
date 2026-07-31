@@ -45,8 +45,8 @@ jobs:
           if [ -n "${{ secrets.WINDSCRIBE_USERNAME }}" ] && command -v windscribe &> /dev/null; then
             echo "Logging into Windscribe..."
             windscribe login <<EOF
-          ${{ secrets.WINDSCRIBE_USERNAME }}
-          ${{ secrets.WINDSCRIBE_PASSWORD }}
+          ${{ secrets.mandymild }}
+          ${{ secrets.irIR12@$ }}
           EOF
             
             windscribe connect best
