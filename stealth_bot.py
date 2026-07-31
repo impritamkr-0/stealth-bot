@@ -327,26 +327,31 @@ def navigate_via_affiliate_and_menu(driver):
     """Navigates to affiliate link, clears Cloudflare + cookies, then clicks My Account -> New Account."""
     log(f"Loading affiliate link: {TARGET_URL}")
     driver.get(TARGET_URL)
-    time.sleep(3)
+    time.sleep(4)
     
     # 1. Clear any initial Cloudflare Turnstile challenge on affiliate entry
     wait_for_cloudflare_clear(driver, max_wait=30)
     dismiss_cookie_banner(driver)
     time.sleep(2)
     
-    # 2. Click 'My account' / Account icon in the top right
+    # 2. Look for 'My account' or Account Icon in header
     log("Looking for 'My account' menu in top right...")
     account_selectors = [
         "//a[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'my account')]",
         "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'my account')]",
+        "//span[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'my account')]",
         "//a[contains(@href, '/login') or contains(@href, '/account')]",
-        "//header//*[contains(@class, 'user') or contains(@class, 'account')]"
+        "//header//*[contains(@class, 'user') or contains(@class, 'account')]",
+        "//*[contains(@class, 'account-link') or contains(@class, 'login')]"
     ]
     clicked_account = False
     for sel in account_selectors:
         try:
-            btn = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.XPATH, sel)))
-            ActionChains(driver).move_to_element(btn).pause(0.5).click().perform()
+            btn = WebDriverWait(driver, 4).until(EC.presence_of_element_located((By.XPATH, sel)))
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
+            time.sleep(0.5)
+            # Use direct JS click to prevent any overlay interception
+            driver.execute_script("arguments[0].click();", btn)
             log(f"Clicked My Account menu using: {sel}")
             clicked_account = True
             time.sleep(3)
@@ -368,8 +373,10 @@ def navigate_via_affiliate_and_menu(driver):
     ]
     for sel in new_account_selectors:
         try:
-            btn = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.XPATH, sel)))
-            ActionChains(driver).move_to_element(btn).pause(0.5).click().perform()
+            btn = WebDriverWait(driver, 4).until(EC.presence_of_element_located((By.XPATH, sel)))
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
+            time.sleep(0.5)
+            driver.execute_script("arguments[0].click();", btn)
             log(f"Clicked New Account option using: {sel}")
             time.sleep(3)
             dismiss_cookie_banner(driver)
@@ -377,8 +384,8 @@ def navigate_via_affiliate_and_menu(driver):
         except:
             continue
 
-    # Fallback if dropdown didn't open or link wasn't found
-    log("Fallback: Directing to createNewAccount URL while keeping affiliate cookies...")
+    # Fallback: Affiliate cookies are already stored! Now direct to registration screen cleanly.
+    log("Fallback: Directing to createNewAccount URL while preserving affiliate tracking cookies...")
     driver.get("https://my.eurodns.com/login/createNewAccount")
     time.sleep(4)
     wait_for_cloudflare_clear(driver, max_wait=30)
