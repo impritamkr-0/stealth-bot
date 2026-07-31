@@ -105,18 +105,60 @@ def check_for_captcha(driver):
     except:
         return False
 
-def wait_for_nopecha_to_solve(driver, max_wait=30):
-    """Allows NopeCHA AI extension time to detect and automatically solve CAPTCHA challenges."""
+def solve_captcha_with_free_nopecha(driver, max_wait=35):
+    """Interacts with reCAPTCHA checkbox via JS and waits for Free-Tier NopeCHA without triggering audio block."""
     if not check_for_captcha(driver):
         return True
-    log("reCAPTCHA widget detected! Waiting up to 30s for NopeCHA auto-solve...")
+    log("reCAPTCHA widget detected! Attempting JS click on checkbox...")
+    
+    try:
+        iframes = driver.find_elements(By.TAG_NAME, "iframe")
+        for iframe in iframes:
+            src = iframe.get_attribute("src") or ""
+            if "recaptcha" in src and "anchor" in src:
+                driver.switch_to.frame(iframe)
+                try:
+                    checkbox = driver.find_element(By.ID, "recaptcha-anchor")
+                    # Use direct JavaScript click to guarantee interaction
+                    driver.execute_script("arguments[0].click();", checkbox)
+                    log("Clicked reCAPTCHA checkbox via JS")
+                except Exception as e:
+                    log(f"Checkbox click warning: {e}")
+                driver.switch_to.default_content()
+                break
+    except Exception as e:
+        driver.switch_to.default_content()
+        log(f"reCAPTCHA frame error: {e}")
+        
+    time.sleep(3)
+    
+    # Check if visual challenge popup opened and look for NopeCHA solve button
+    try:
+        iframes = driver.find_elements(By.TAG_NAME, "iframe")
+        for iframe in iframes:
+            src = iframe.get_attribute("src") or ""
+            if "recaptcha" in src and ("bframe" in src or "challenge" in src):
+                driver.switch_to.frame(iframe)
+                log("Switched to reCAPTCHA challenge popup frame")
+                time.sleep(2)
+                try:
+                    # Click NopeCHA visual solver button if present inside iframe
+                    nopecha_btn = driver.find_element(By.XPATH, "//*[@id='solver-button' or contains(@class, 'nopecha') or contains(@title, 'Solve')]")
+                    driver.execute_script("arguments[0].click();", nopecha_btn)
+                    log("Clicked NopeCHA visual solver button!")
+                except:
+                    log("NopeCHA button not immediately clickable; waiting for automatic solve...")
+                driver.switch_to.default_content()
+                break
+    except:
+        driver.switch_to.default_content()
+
+    log(f"Waiting up to {max_wait}s for NopeCHA to solve visually...")
     for step in range(int(max_wait / 3)):
         time.sleep(3)
-        # Check if CAPTCHA iframe disappeared or if checkbox became checked
         if not check_for_captcha(driver):
-            log("CAPTCHA cleared by NopeCHA!")
+            log("CAPTCHA cleared successfully!")
             return True
-        # Try to inspect reCAPTCHA anchor to see if 'aria-checked' is true
         try:
             iframes = driver.find_elements(By.TAG_NAME, "iframe")
             for iframe in iframes:
@@ -127,11 +169,12 @@ def wait_for_nopecha_to_solve(driver, max_wait=30):
                     checked = anchor.get_attribute("aria-checked")
                     driver.switch_to.default_content()
                     if checked == "true":
-                        log("reCAPTCHA checkbox verified by NopeCHA!")
+                        log("reCAPTCHA verified!")
                         return True
         except:
             driver.switch_to.default_content()
-    log("NopeCHA wait completed.")
+            
+    log("CAPTCHA wait finished.")
     return False
 
 def create_proxy_auth_extension(proxy_str):
@@ -235,7 +278,7 @@ def build_chrome_options():
     
     if os.path.exists(nopecha_path) and os.path.exists(f"{nopecha_path}/manifest.json"):
         extensions_to_load.append(nopecha_path)
-        log("NopeCHA extension located")
+        log("NopeCHA free-tier extension located")
 
     if extensions_to_load:
         options.add_argument(f"--load-extension={','.join(extensions_to_load)}")
@@ -260,19 +303,6 @@ def launch_driver():
                 log(f"Retry with version_main={major_ver} failed: {e2}")
                 return None
         return None
-
-def activate_nopecha(driver):
-    """Activates NopeCHA API Key in the extension."""
-    nopecha_key = os.environ.get("NOPECHA_KEY", "").strip()
-    if nopecha_key:
-        log("Activating NopeCHA API key...")
-        try:
-            # Visiting NopeCHA setup URL registers the API key with the extension
-            driver.get(f"https://nopecha.com/setup#key={nopecha_key}")
-            time.sleep(3)
-            log("NopeCHA API Key configured!")
-        except Exception as e:
-            log(f"NopeCHA activation warning: {e}")
 
 def run_bot():
     log("=" * 60)
@@ -322,10 +352,6 @@ def run_bot():
     driver.implicitly_wait(5)
     
     try:
-        # 1. Activate NopeCHA API key first
-        activate_nopecha(driver)
-        
-        # 2. Navigate to Registration page
         log("Loading registration page...")
         driver.get("https://my.eurodns.com/login/createNewAccount")
         
@@ -393,8 +419,8 @@ def run_bot():
         if is_github:
             driver.save_screenshot("screenshot_02_filled.png")
         
-        # Give NopeCHA time to detect and clear CAPTCHA before submitting
-        wait_for_nopecha_to_solve(driver, max_wait=20)
+        # Check and attempt to solve visual CAPTCHA before initial submit (No audio button)
+        solve_captcha_with_free_nopecha(driver, max_wait=20)
         time.sleep(2)
         
         log("Submitting form...")
@@ -404,10 +430,9 @@ def run_bot():
         if is_github:
             driver.save_screenshot("screenshot_03_submitted.png")
         
-        # Check if CAPTCHA challenge appeared after submission
         if check_for_captcha(driver):
             log("CAPTCHA challenge detected after submit!")
-            wait_for_nopecha_to_solve(driver, max_wait=25)
+            solve_captcha_with_free_nopecha(driver, max_wait=30)
             time.sleep(3)
             if is_github:
                 driver.save_screenshot("screenshot_04_captcha.png")
