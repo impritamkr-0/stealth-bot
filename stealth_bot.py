@@ -4,7 +4,7 @@ import time
 import random
 import string
 import tempfile
-import re
+import subprocess
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -15,6 +15,18 @@ TARGET_URL = "https://eurodns.pxf.io/PzkDy6"
 
 def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+
+def get_chrome_major_version():
+    """Detects installed major Google Chrome version cleanly."""
+    try:
+        output = subprocess.check_output(['google-chrome', '--version'], text=True)
+        version_str = output.strip().split()[-1]
+        major = int(version_str.split('.')[0])
+        log(f"Detected Google Chrome Major Version: {major}")
+        return major
+    except Exception as e:
+        log(f"Version detection failed: {e}. Defaulting to 150.")
+        return 150
 
 def generate_random_email():
     domains = ["1secmail.com", "1secmail.net", "1secmail.org"]
@@ -133,7 +145,7 @@ def create_proxy_auth_extension(proxy_str):
         elif clean_proxy.count(":") == 3:
             host, port, user, password = clean_proxy.split(":", 3)
         else:
-            log("Proxy format unauthenticated or unrecognized (no user/pass found).")
+            log("Proxy format unauthenticated or unrecognized.")
             return None
         
         manifest_json = """
@@ -197,7 +209,8 @@ def create_proxy_auth_extension(proxy_str):
         log(f"Failed to build proxy extension: {e}")
         return None
 
-def launch_driver():
+def build_chrome_options():
+    """Generates a fresh ChromeOptions object to avoid reuse crashes."""
     buster_path = os.environ.get('BUSTER_PATH', '/opt/buster')
     proxy = os.environ.get('PROXY_URL')
     
@@ -208,8 +221,6 @@ def launch_driver():
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--disable-notifications")
     options.add_argument("--lang=en-US,en;q=0.9")
-    
-    # Hide automated browser fingerprints
     options.add_argument("--disable-blink-features=AutomationControlled")
     
     extensions_to_load = []
@@ -219,9 +230,10 @@ def launch_driver():
             extensions_to_load.append(proxy_ext_dir)
             log("Authenticated Proxy Extension configured successfully.")
         else:
-            clean_proxy = proxy.replace("http://", "").replace("https://", "")
-            options.add_argument(f'--proxy-server=http://{clean_proxy}')
-            log(f"Unauthenticated Proxy argument added: {clean_proxy}")
+            clean_proxy = proxy.replace("http://", "").replace("https://", "").strip()
+            if clean_proxy.count(":") == 1:
+                options.add_argument(f'--proxy-server=http://{clean_proxy}')
+                log(f"Unauthenticated Proxy argument added: {clean_proxy}")
     
     if os.path.exists(buster_path) and os.path.exists(f"{buster_path}/manifest.json"):
         extensions_to_load.append(buster_path)
@@ -229,28 +241,25 @@ def launch_driver():
 
     if extensions_to_load:
         options.add_argument(f"--load-extension={','.join(extensions_to_load)}")
-    
-    log("Launching undetected-chromedriver in headed mode (via Xvfb)...")
-    
-    try:
-        # 1. First try launching normally without pinning a major version
-        return uc.Chrome(options=options)
-    except Exception as e:
-        err_msg = str(e)
-        log(f"Default launch failed: {err_msg}")
         
-        # 2. If ChromeDriver version mismatch occurs, extract the browser version from the error message!
-        # Example message: "Current browser version is 150.0.7871.0"
-        match = re.search(r"Current browser version is (\d+)", err_msg)
-        if match:
-            major_ver = int(match.group(1))
-            log(f"Detected mismatch! Forcing version_main={major_ver} to match browser...")
-            try:
-                return uc.Chrome(options=options, version_main=major_ver)
-            except Exception as e2:
-                log(f"Retry with version_main={major_ver} failed: {e2}")
-                return None
-        return None
+    return options
+
+def launch_driver():
+    major_ver = get_chrome_major_version()
+    
+    log(f"Launching undetected-chromedriver with explicit version_main={major_ver}...")
+    try:
+        # 1. First attempt: Launch directly with the detected version (e.g. 150)
+        return uc.Chrome(options=build_chrome_options(), version_main=major_ver)
+    except Exception as e:
+        log(f"Launch with version_main={major_ver} failed: {e}")
+        log("Retrying fallback launch with a FRESH ChromeOptions object...")
+        try:
+            # 2. Second attempt: Create a brand new options object so Selenium doesn't throw a reuse error
+            return uc.Chrome(options=build_chrome_options())
+        except Exception as e2:
+            log(f"Fallback launch failed: {e2}")
+            return None
 
 def run_bot():
     log("=" * 60)
