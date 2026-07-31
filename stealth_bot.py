@@ -51,6 +51,32 @@ def wait_for_element(driver, by, value, timeout=20):
     except:
         return None
 
+def dismiss_cookie_banner(driver):
+    """Detects and clicks 'Accept All' on cookie consent overlays/modals."""
+    log("Checking for cookie consent banner...")
+    cookie_selectors = [
+        "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'accept all')]",
+        "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'accept cookies')]",
+        "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'allow all')]",
+        "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'accept')]",
+        "//a[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'accept all')]",
+        "//button[@id='onetrust-accept-btn-handler']",
+        "//button[contains(@id, 'cookie') and contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'accept')]",
+        "//button[contains(@class, 'cookie') and contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'accept')]"
+    ]
+    for selector in cookie_selectors:
+        try:
+            btn = driver.find_element(By.XPATH, selector)
+            if btn.is_displayed():
+                driver.execute_script("arguments[0].click();", btn)
+                log(f"Clicked Cookie Accept button using selector: {selector}")
+                time.sleep(2)
+                return True
+        except:
+            continue
+    log("No cookie banner found or already dismissed.")
+    return False
+
 def human_type(element, text):
     element.clear()
     for char in text:
@@ -83,7 +109,6 @@ def click_submit_button(driver, final=False):
             btn = WebDriverWait(driver, 5).until(
                 EC.presence_of_element_located((By.XPATH, selector))
             )
-            # Scroll to center so overlays don't block the button
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
             time.sleep(1)
             try:
@@ -282,10 +307,14 @@ def launch_driver():
         return None
 
 def navigate_via_affiliate_and_menu(driver):
-    """Navigates to TARGET_URL first, then clicks My Account -> New Account."""
+    """Navigates to TARGET_URL first, clears cookies popup, then clicks My Account -> New Account."""
     log(f"Loading affiliate link: {TARGET_URL}")
     driver.get(TARGET_URL)
     time.sleep(5)
+    
+    # Dismiss cookie banner immediately upon loading affiliate site
+    dismiss_cookie_banner(driver)
+    time.sleep(2)
     
     # 1. Click 'My account' / Account icon in the top right
     log("Looking for 'My account' menu in top right...")
@@ -303,6 +332,7 @@ def navigate_via_affiliate_and_menu(driver):
             log(f"Clicked My Account menu using: {sel}")
             clicked_account = True
             time.sleep(3)
+            dismiss_cookie_banner(driver)
             break
         except:
             continue
@@ -324,6 +354,7 @@ def navigate_via_affiliate_and_menu(driver):
             driver.execute_script("arguments[0].click();", btn)
             log(f"Clicked New Account option using: {sel}")
             time.sleep(3)
+            dismiss_cookie_banner(driver)
             return True
         except:
             continue
@@ -332,6 +363,7 @@ def navigate_via_affiliate_and_menu(driver):
     log("Fallback: Directing to createNewAccount URL while keeping affiliate cookies...")
     driver.get("https://my.eurodns.com/login/createNewAccount")
     time.sleep(4)
+    dismiss_cookie_banner(driver)
     return True
 
 def run_bot():
@@ -382,7 +414,7 @@ def run_bot():
     driver.implicitly_wait(5)
     
     try:
-        # Navigate via Affiliate link -> My account -> New account
+        # Navigate via Affiliate link -> Accept Cookies -> My account -> New account
         navigate_via_affiliate_and_menu(driver)
         
         log("Waiting for DOM to render...")
@@ -399,6 +431,9 @@ def run_bot():
             if "just a moment" in driver.title.lower() or "challenge" in page_lower or "turnstile" in page_lower:
                 log(f"[Wait {wait_attempt+1}/10] Cloudflare Challenge present, waiting for auto-resolution...")
                 continue
+            
+            # Dismiss cookie banner again if present on registration page
+            dismiss_cookie_banner(driver)
             
             for xpath in ["//input[@type='email']", "//input[contains(@name, 'email')]", "//input[contains(@id, 'email')]"]:
                 email_field = wait_for_element(driver, By.XPATH, xpath, timeout=3)
