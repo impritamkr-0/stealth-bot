@@ -4,7 +4,9 @@ import time
 import random
 import string
 import tempfile
-import undetected_chromedriver as uc
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -123,10 +125,9 @@ def check_for_captcha(driver):
 def create_proxy_auth_extension(proxy_str):
     """Creates a temporary Chrome extension to authenticate proxies automatically."""
     try:
-        # Strip schema if present
         clean_proxy = proxy_str.replace("http://", "").replace("https://", "")
         if "@" not in clean_proxy:
-            return None # Unauthenticated proxy
+            return None
         
         auth, host_port = clean_proxy.split("@", 1)
         user, password = auth.split(":", 1)
@@ -198,7 +199,12 @@ def launch_driver():
     buster_path = os.environ.get('BUSTER_PATH', '/opt/buster')
     proxy = os.environ.get('PROXY_URL')
     
-    options = uc.ChromeOptions()
+    options = Options()
+    
+    # Hide automation banners and automation flags
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option('useAutomationExtension', False)
+    options.add_argument("--disable-blink-features=AutomationControlled")
     
     if is_github:
         options.add_argument("--headless=new")
@@ -217,7 +223,6 @@ def launch_driver():
             extensions_to_load.append(proxy_ext_dir)
             log("Authenticated Proxy Extension configured")
         else:
-            # Fallback for plain proxies without user:pass
             clean_proxy = proxy.replace("http://", "").replace("https://", "")
             options.add_argument(f'--proxy-server=http://{clean_proxy}')
             log(f"Unauthenticated Proxy argument added: {clean_proxy}")
@@ -229,9 +234,11 @@ def launch_driver():
     if extensions_to_load:
         options.add_argument(f"--load-extension={','.join(extensions_to_load)}")
     
-    log("Launching Chrome...")
+    log("Launching Chrome using Selenium Manager (Auto-matching driver)...")
     try:
-        return uc.Chrome(options=options)
+        # Standard Selenium driver handles driver matching automatically!
+        driver = webdriver.Chrome(options=options)
+        return driver
     except Exception as e:
         log(f"Launch error: {e}")
         return None
@@ -270,6 +277,7 @@ def run_bot():
         sys.exit(1)
     
     try:
+        # Apply selenium-stealth to mask headless Selenium detection
         stealth(driver,
             languages=["en-US", "en"],
             vendor="Google Inc.",
@@ -278,8 +286,8 @@ def run_bot():
             renderer="Intel Iris OpenGL Engine",
             fix_hairline=True,
         )
-    except:
-        pass
+    except Exception as e:
+        log(f"Stealth warning: {e}")
     
     driver.implicitly_wait(5)
     
@@ -287,7 +295,6 @@ def run_bot():
         log("Loading registration page...")
         driver.get("https://my.eurodns.com/login/createNewAccount")
         
-        # Explicit wait for page body to confirm we bypassed proxy/network errors
         body = wait_for_element(driver, By.TAG_NAME, "body", timeout=20)
         time.sleep(5)
         
@@ -297,7 +304,6 @@ def run_bot():
         if is_github:
             driver.save_screenshot("screenshot_01_loaded.png")
         
-        # Fill form
         log("Filling form...")
         email_field = wait_for_element(driver, By.XPATH, "//input[@type='email']", timeout=20)
         if not email_field:
@@ -376,6 +382,7 @@ def run_bot():
         log(traceback.format_exc())
         if is_github:
             driver.save_screenshot("screenshot_error.png")
+        sys.exit(1)
     finally:
         log("Closing browser...")
         try:
