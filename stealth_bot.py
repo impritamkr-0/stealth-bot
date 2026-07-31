@@ -10,15 +10,27 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium_stealth import stealth
 
+TARGET_URL = "https://eurodns.pxf.io/PzkDy6"
+
 def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
 def get_chrome_version():
+    """Get installed Chrome major version"""
     try:
-        result = subprocess.run(['google-chrome', '--version'], capture_output=True, text=True, timeout=5)
-        version = int(result.stdout.strip().split()[-1].split('.')[0])
+        result = subprocess.run(
+            ['google-chrome', '--version'], 
+            capture_output=True, 
+            text=True, 
+            timeout=5
+        )
+        version_str = result.stdout.strip()
+        log(f"Detected: {version_str}")
+        # Extract major version (e.g., "150" from "Google Chrome 150.0.7871.0")
+        version = int(version_str.split()[-1].split('.')[0])
         return version
-    except:
+    except Exception as e:
+        log(f"Version detection failed: {e}")
         return None
 
 def generate_random_email():
@@ -27,40 +39,55 @@ def generate_random_email():
     return f"{username}@{random.choice(domains)}"
 
 def generate_strong_password():
-    chars = string.ascii_letters + string.digits + "!@#$%^&*"
-    pwd = ''.join(random.choice(chars) for _ in range(12))
-    return pwd
+    upper = random.choice(string.ascii_uppercase)
+    lower = random.choice(string.ascii_lowercase)
+    digit = random.choice(string.digits)
+    special = random.choice("!@#$%^&*")
+    remaining = ''.join(random.choice(string.ascii_letters + string.digits + "!@#$%^&*") for _ in range(8))
+    password = upper + lower + digit + special + remaining
+    password = ''.join(random.sample(password, len(password)))
+    return password
 
 def wait_for_element(driver, by, value, timeout=10):
     try:
-        return WebDriverWait(driver, timeout).until(EC.presence_of_element_located((by, value)))
+        return WebDriverWait(driver, timeout).until(
+            EC.presence_of_element_located((by, value))
+        )
     except:
         return None
 
-def fill_field(driver, element, text):
+def smart_fill_field(driver, element, text):
     try:
         driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
         time.sleep(0.3)
-        element.click()
-        time.sleep(0.2)
         element.clear()
         element.send_keys(text)
         time.sleep(0.3)
-        # Verify
+        # Verify it was filled
         if element.get_attribute("value") == text:
             return True
-        # Fallback
+        # Fallback to JS
         driver.execute_script(f"arguments[0].value = '{text}';", element)
         driver.execute_script("arguments[0].dispatchEvent(new Event('input', {bubbles: true}));", element)
         return True
     except:
         return False
 
-def click_submit(driver, final=False):
-    selectors = ["//button[contains(text(), 'Create account')]", "//button[@type='submit']", "//button[contains(@class, 'btn-primary')]"]
-    for sel in selectors:
+def click_submit_button(driver, final=False):
+    selectors = [
+        "//button[contains(text(), 'Create account')]",
+        "//button[contains(text(), 'Create Account')]",
+        "//button[@type='submit']",
+        "//button[contains(@class, 'btn-primary')]",
+    ]
+    if final:
+        selectors = ["//button[contains(text(), 'Create account')]"] + selectors
+    
+    for selector in selectors:
         try:
-            btn = WebDriverWait(driver, 3).until(EC.element_to_be_clickable((By.XPATH, sel)))
+            btn = WebDriverWait(driver, 3).until(
+                EC.element_to_be_clickable((By.XPATH, selector))
+            )
             driver.execute_script("arguments[0].click();", btn)
             log("Submit clicked")
             return True
@@ -68,37 +95,65 @@ def click_submit(driver, final=False):
             continue
     return False
 
-def click_audio(driver):
+def click_audio_button(driver):
+    log("Switching to audio CAPTCHA...")
     try:
         time.sleep(2)
         iframes = driver.find_elements(By.TAG_NAME, "iframe")
+        challenge_iframe = None
         for iframe in iframes:
             src = iframe.get_attribute("src") or ""
-            if "recaptcha" in src and "bframe" in src:
-                driver.switch_to.frame(iframe)
-                time.sleep(1)
-                try:
-                    btn = driver.find_element(By.ID, "recaptcha-audio-button")
-                    driver.execute_script("arguments[0].click();", btn)
-                    log("Audio button clicked")
-                    driver.switch_to.default_content()
-                    return True
-                except:
-                    pass
+            if "recaptcha" in src and ("challenge" in src or "bframe" in src):
+                challenge_iframe = iframe
+                break
+        
+        if challenge_iframe:
+            driver.switch_to.frame(challenge_iframe)
+            log("Switched to challenge iframe")
+            time.sleep(1)
+            
+            # Try to click audio button
+            try:
+                btn = driver.find_element(By.ID, "recaptcha-audio-button")
+                driver.execute_script("arguments[0].click();", btn)
+                log("Audio button clicked")
                 driver.switch_to.default_content()
+                return True
+            except:
+                # Try alternative selectors
+                for sel in ["//button[contains(@class, 'rc-button-audio')]", "//button[@title='Get an audio challenge']"]:
+                    try:
+                        btn = driver.find_element(By.XPATH, sel)
+                        driver.execute_script("arguments[0].click();", btn)
+                        log("Audio button clicked (alt)")
+                        driver.switch_to.default_content()
+                        return True
+                    except:
+                        continue
+        
+        driver.switch_to.default_content()
         return False
     except Exception as e:
-        log(f"Audio error: {e}")
+        log(f"Audio button error: {e}")
         driver.switch_to.default_content()
         return False
 
-def has_captcha(driver):
-    return len(driver.find_elements(By.XPATH, "//iframe[contains(@src, 'recaptcha')]")) > 0
+def check_for_captcha(driver):
+    try:
+        return len(driver.find_elements(By.XPATH, "//iframe[contains(@src, 'recaptcha')]")) > 0
+    except:
+        return False
 
-def create_driver():
+def launch_driver():
+    """Launch Chrome with proper version matching"""
     is_github = os.environ.get('GITHUB_ACTIONS') == 'true'
-    proxy = os.environ.get('PROXY_URL', '')
+    buster_path = os.environ.get('BUSTER_PATH', '/opt/buster')
+    proxy = os.environ.get('PROXY_URL')
     
+    # Get Chrome version first
+    chrome_version = get_chrome_version()
+    
+    # Create fresh options
     options = uc.ChromeOptions()
     
     if is_github:
@@ -110,34 +165,28 @@ def create_driver():
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--disable-notifications")
     
-    # Add proxy if provided (ip:port format only)
-    if proxy and ":" in proxy:
-        # Check if proxy has auth (ip:port:user:pass)
-        parts = proxy.split(":")
-        if len(parts) == 4:
-            # Has auth - use ip:port only for Chrome, auth handled separately
-            proxy_str = f"{parts[0]}:{parts[1]}"
-        else:
-            proxy_str = proxy
-        options.add_argument(f'--proxy-server=http://{proxy_str}')
-        log(f"Using proxy: {proxy_str}")
+    # Add proxy if set (format: ip:port)
+    if proxy:
+        options.add_argument(f'--proxy-server=http://{proxy}')
+        log(f"Proxy: {proxy}")
     
     # Load Buster
-    buster = '/opt/buster'
-    if os.path.exists(f"{buster}/manifest.json"):
-        options.add_argument(f"--load-extension={buster}")
+    if os.path.exists(buster_path) and os.path.exists(f"{buster_path}/manifest.json"):
+        options.add_argument(f"--load-extension={buster_path}")
+        log("Buster loaded")
     
-    # Get Chrome version and create driver
-    chrome_ver = get_chrome_version()
-    log(f"Chrome version: {chrome_ver}")
-    
+    # Launch with version matching
+    log(f"Launching Chrome...")
     try:
-        if chrome_ver:
-            return uc.Chrome(options=options, version_main=chrome_ver)
-        return uc.Chrome(options=options)
+        if chrome_version:
+            log(f"Using Chrome version: {chrome_version}")
+            return uc.Chrome(options=options, version_main=chrome_version)
+        else:
+            return uc.Chrome(options=options)
     except Exception as e:
-        log(f"Driver error: {e}")
-        # Try without version
+        log(f"Launch error: {e}")
+        # Retry without version specification
+        log("Retrying with auto-detect...")
         return uc.Chrome(options=options)
 
 def run_bot():
@@ -146,122 +195,161 @@ def run_bot():
     log("=" * 60)
     
     is_github = os.environ.get('GITHUB_ACTIONS') == 'true'
+    
+    # Generate credentials
     email = generate_random_email()
     password = generate_strong_password()
     
     log(f"Email: {email}")
-    log(f"Password: {'*' * len(password)}")
+    log(f"Password: {'*' * len(password)} ({len(password)} chars)")
     
+    # Save immediately
     if is_github:
         with open("account_credentials.txt", "w") as f:
             f.write(f"Email: {email}\nPassword: {password}\n")
     
+    # Setup Chrome
+    log("Setting up Chrome...")
     driver = None
-    retries = 0
-    max_retries = 3
     
-    while retries < max_retries:
+    # Try launching with retry
+    for attempt in range(3):
         try:
-            log(f"Launching Chrome (attempt {retries + 1})...")
-            driver = create_driver()
+            log(f"Launch attempt {attempt + 1}...")
+            driver = launch_driver()
+            log("Chrome launched successfully")
             break
         except Exception as e:
-            log(f"Launch failed: {e}")
-            retries += 1
+            log(f"Attempt {attempt + 1} failed: {e}")
             time.sleep(2)
     
     if not driver:
         log("Fatal: Could not launch Chrome")
         sys.exit(1)
     
+    # Apply stealth
     try:
-        stealth(driver, languages=["en-US", "en"], vendor="Google Inc.", platform="Win32", 
-                webgl_vendor="Intel Inc.", renderer="Intel Iris OpenGL Engine", fix_hairline=True)
+        stealth(driver,
+            languages=["en-US", "en"],
+            vendor="Google Inc.",
+            platform="Win32",
+            webgl_vendor="Intel Inc.",
+            renderer="Intel Iris OpenGL Engine",
+            fix_hairline=True,
+        )
     except:
         pass
     
+    driver.implicitly_wait(10)
+    
     try:
-        log("Loading page...")
+        # Navigate to registration
+        log("Loading registration page...")
         driver.get("https://my.eurodns.com/login/createNewAccount")
         time.sleep(5)
         
         if is_github:
-            driver.save_screenshot("screenshot_01.png")
+            driver.save_screenshot("screenshot_01_loaded.png")
         
-        # Fill email
-        email_field = wait_for_element(driver, By.XPATH, "//input[@type='email']", 15)
+        # Fill form
+        log("Filling form...")
+        
+        # Email
+        email_field = wait_for_element(driver, By.XPATH, "//input[@type='email']", timeout=15)
         if not email_field:
             raise Exception("Email field not found")
         
-        fill_field(driver, email_field, email)
+        smart_fill_field(driver, email_field, email)
         log("Email filled")
         time.sleep(1)
         
-        # Fill passwords
+        # Password fields
         pass_fields = driver.find_elements(By.XPATH, "//input[@type='password']")
         if len(pass_fields) >= 2:
-            fill_field(driver, pass_fields[0], password)
+            smart_fill_field(driver, pass_fields[0], password)
             log("Password filled")
             time.sleep(0.5)
-            fill_field(driver, pass_fields[1], password)
+            smart_fill_field(driver, pass_fields[1], password)
             log("Confirm password filled")
         else:
-            raise Exception("Password fields not found")
+            log(f"Warning: Found {len(pass_fields)} password field(s)")
         
         # Checkboxes
-        for cb in driver.find_elements(By.XPATH, "//input[@type='checkbox']"):
-            try:
+        try:
+            for cb in driver.find_elements(By.XPATH, "//input[@type='checkbox']"):
                 if not cb.is_selected():
                     driver.execute_script("arguments[0].click();", cb)
-                    time.sleep(0.3)
-            except:
-                pass
+        except:
+            pass
         
         if is_github:
-            driver.save_screenshot("screenshot_02.png")
+            driver.save_screenshot("screenshot_02_filled.png")
         
         # Submit
-        log("Submitting...")
-        click_submit(driver)
+        log("Submitting form...")
+        click_submit_button(driver)
         time.sleep(8)
         
         if is_github:
-            driver.save_screenshot("screenshot_03.png")
+            driver.save_screenshot("screenshot_03_submitted.png")
         
         # Handle CAPTCHA
-        if has_captcha(driver):
-            log("CAPTCHA found, clicking audio...")
-            if click_audio(driver):
-                log("Waiting for Buster...")
+        if check_for_captcha(driver):
+            log("CAPTCHA detected!")
+            
+            if click_audio_button(driver):
+                log("Waiting for Buster (30s)...")
                 time.sleep(30)
+                
+                if not check_for_captcha(driver):
+                    log("CAPTCHA solved!")
+                else:
+                    log("CAPTCHA still present")
+            
+            if is_github:
+                driver.save_screenshot("screenshot_04_captcha.png")
         
         # Final submit
+        log("Final submission...")
         time.sleep(3)
-        click_submit(driver, final=True)
+        
+        for i in range(3):
+            if click_submit_button(driver, final=True):
+                break
+            time.sleep(2)
+        
         time.sleep(10)
         
         if is_github:
-            driver.save_screenshot("screenshot_04.png")
+            driver.save_screenshot("screenshot_05_final.png")
         
+        # Check result
         url = driver.current_url
-        success = "create" not in url
+        page = driver.page_source.lower()
+        
+        success = any(x in page for x in ["welcome", "success", "verification", "dashboard"]) or "create" not in url
         
         log("=" * 60)
-        log("SUCCESS!" if success else "CHECK SCREENSHOTS")
+        log("SUCCESS!" if success else "UNCLEAR")
         log(f"URL: {url}")
         log("=" * 60)
         
         if is_github:
             with open("account_credentials.txt", "a") as f:
-                f.write(f"URL: {url}\n")
+                f.write(f"URL: {url}\nStatus: {'SUCCESS' if success else 'UNKNOWN'}\n")
         
     except Exception as e:
         log(f"ERROR: {e}")
-        if is_github and driver:
+        import traceback
+        log(traceback.format_exc())
+        if is_github:
             driver.save_screenshot("screenshot_error.png")
     finally:
-        if driver:
+        log("Closing browser...")
+        try:
             driver.quit()
+        except:
+            pass
         log("Done")
 
 if __name__ == "__main__":
