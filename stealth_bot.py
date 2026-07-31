@@ -199,14 +199,10 @@ def launch_driver():
     
     options = uc.ChromeOptions()
     
-    if is_github:
-        options.add_argument("--headless=new")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-gpu")
-        # Mask headless user agent
-        options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
-    
+    # IMPORTANT: Do NOT use --headless=new here. Xvfb handles virtual display display!
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--disable-notifications")
     options.add_argument("--lang=en-US,en;q=0.9")
@@ -229,9 +225,8 @@ def launch_driver():
     if extensions_to_load:
         options.add_argument(f"--load-extension={','.join(extensions_to_load)}")
     
-    log("Launching undetected-chromedriver...")
+    log("Launching undetected-chromedriver in headed mode (via Xvfb)...")
     try:
-        # Let UC auto-detect matching version without passing explicit integer
         return uc.Chrome(options=options)
     except Exception as e:
         log(f"Launch error: {e}")
@@ -288,18 +283,19 @@ def run_bot():
         log("Loading registration page...")
         driver.get("https://my.eurodns.com/login/createNewAccount")
         
-        # Robust Cloudflare Turnstile & empty DOM wait loop
+        # Turnstile / DOM wait loop
         log("Waiting for DOM to render...")
         email_field = None
-        for wait_attempt in range(8):  # Check up to 40 seconds
+        for wait_attempt in range(10):  # Wait up to 50 seconds
             time.sleep(5)
-            # Check if we are stuck on a challenge screen
             page_lower = driver.page_source.lower()
+            
+            # Check if stuck on a challenge screen
             if "just a moment" in driver.title.lower() or "challenge" in page_lower:
-                log(f"[Wait {wait_attempt+1}/8] Cloudflare Challenge present, waiting...")
+                log(f"[Wait {wait_attempt+1}/10] Cloudflare Challenge present, waiting for auto-resolution...")
                 continue
             
-            # Check if page rendered the email input
+            # Look for email input
             for xpath in ["//input[@type='email']", "//input[contains(@name, 'email')]", "//input[contains(@id, 'email')]"]:
                 email_field = wait_for_element(driver, By.XPATH, xpath, timeout=3)
                 if email_field:
@@ -309,7 +305,7 @@ def run_bot():
                 log("Registration form loaded successfully!")
                 break
             else:
-                log(f"[Wait {wait_attempt+1}/8] Form not visible yet. Refreshing page...")
+                log(f"[Wait {wait_attempt+1}/10] Form not visible yet. Refreshing page...")
                 driver.refresh()
         
         log(f"Current Page Title: {driver.title}")
