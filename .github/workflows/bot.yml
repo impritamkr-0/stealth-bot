@@ -26,18 +26,30 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq google-chrome-stable xvfb xserver-xephyr
 
-      - name: Download NopeCHA Extension (Free Tier)
+      - name: Download NopeCHA Extension
         run: |
-          echo "Downloading NopeCHA..."
-          wget --tries=3 --timeout=30 -q "https://github.com/NopeCHAMP/nopecha-extension/releases/latest/download/nopecha-chrome.zip" -O /tmp/nopecha.zip || \
-          wget --tries=3 --timeout=30 -q "https://github.com/NopeCHAMP/nopecha-extension/releases/download/0.4.8/nopecha-chrome.zip" -O /tmp/nopecha.zip
+          echo "Downloading NopeCHA extension..."
+          sudo mkdir -p /opt/nopecha
           
-          if [ -f "/tmp/nopecha.zip" ]; then
-            sudo mkdir -p /opt/nopecha
-            sudo unzip -q -o /tmp/nopecha.zip -d /opt/nopecha
+          # 1. Try downloading latest NopeCHA release ZIP from GitHub tags
+          LATEST_TAG=$(curl -s https://api.github.com/repos/NopeCHAMP/nopecha-extension/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+          if [ -n "$LATEST_TAG" ]; then
+            wget --tries=3 --timeout=30 -q "https://github.com/NopeCHAMP/nopecha-extension/archive/refs/tags/${LATEST_TAG}.zip" -O /tmp/nopecha.zip || true
+          fi
+          
+          # 2. Fallback: Download default main branch archive if release tag ZIP failed
+          if [ ! -s "/tmp/nopecha.zip" ]; then
+            wget --tries=3 --timeout=30 -q "https://github.com/NopeCHAMP/nopecha-extension/archive/refs/heads/main.zip" -O /tmp/nopecha.zip || true
+          fi
+          
+          # 3. Unpack extension cleanly into /opt/nopecha
+          if [ -s "/tmp/nopecha.zip" ]; then
+            sudo unzip -q -o /tmp/nopecha.zip -d /tmp/nopecha_unpacked
+            # Move inner directory contents directly into /opt/nopecha
+            sudo cp -r /tmp/nopecha_unpacked/*/* /opt/nopecha/ 2>/dev/null || sudo cp -r /tmp/nopecha_unpacked/* /opt/nopecha/
             ls -la /opt/nopecha/
           else
-            mkdir -p /opt/nopecha
+            echo "Warning: Could not download NopeCHA ZIP. Running without extension."
           fi
 
       - name: Install Python Dependencies
