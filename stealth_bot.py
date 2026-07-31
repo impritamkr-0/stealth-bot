@@ -4,6 +4,7 @@ import time
 import random
 import string
 import tempfile
+import subprocess
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -14,6 +15,18 @@ TARGET_URL = "https://eurodns.pxf.io/PzkDy6"
 
 def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+
+def get_chrome_major_version():
+    """Detects installed major Google Chrome version on Linux/Ubuntu runners."""
+    try:
+        output = subprocess.check_output(['google-chrome', '--version'], text=True)
+        version_str = output.strip().split()[-1]
+        major = int(version_str.split('.')[0])
+        log(f"Detected Google Chrome Major Version: {major}")
+        return major
+    except Exception as e:
+        log(f"Version detection failed: {e}")
+        return None
 
 def generate_random_email():
     domains = ["1secmail.com", "1secmail.net", "1secmail.org"]
@@ -27,8 +40,7 @@ def generate_strong_password():
     special = random.choice("!@#$%^&*")
     remaining = ''.join(random.choice(string.ascii_letters + string.digits + "!@#$%^&*") for _ in range(8))
     password = upper + lower + digit + special + remaining
-    password = ''.join(random.sample(password, len(password)))
-    return password
+    return ''.join(random.sample(password, len(password)))
 
 def wait_for_element(driver, by, value, timeout=20):
     try:
@@ -123,13 +135,18 @@ def check_for_captcha(driver):
 def create_proxy_auth_extension(proxy_str):
     """Creates a temporary Chrome extension to authenticate proxies automatically."""
     try:
-        clean_proxy = proxy_str.replace("http://", "").replace("https://", "")
-        if "@" not in clean_proxy:
-            return None
+        clean_proxy = proxy_str.replace("http://", "").replace("https://", "").strip()
         
-        auth, host_port = clean_proxy.split("@", 1)
-        user, password = auth.split(":", 1)
-        host, port = host_port.split(":", 1)
+        # Support both 'user:pass@ip:port' and 'ip:port:user:pass' formats
+        if "@" in clean_proxy:
+            auth, host_port = clean_proxy.split("@", 1)
+            user, password = auth.split(":", 1)
+            host, port = host_port.split(":", 1)
+        elif clean_proxy.count(":") == 3:
+            host, port, user, password = clean_proxy.split(":", 3)
+        else:
+            log("Proxy format unauthenticated or unrecognized (no user/pass found).")
+            return None
         
         manifest_json = """
         {
@@ -158,8 +175,8 @@ def create_proxy_auth_extension(proxy_str):
                 rules: {{
                   singleProxy: {{
                     scheme: "http",
-                    host: "{host}",
-                    port: parseInt({port})
+                    host: "{host.strip()}",
+                    port: parseInt({port.strip()})
                   }},
                   bypassList: ["localhost"]
                 }}
@@ -170,8 +187,8 @@ def create_proxy_auth_extension(proxy_str):
         function callbackFn(details) {{
             return {{
                 authCredentials: {{
-                    username: "{user}",
-                    password: "{password}"
+                    username: "{user.strip()}",
+                    password: "{password.strip()}"
                 }}
             }};
         }}
@@ -193,13 +210,10 @@ def create_proxy_auth_extension(proxy_str):
         return None
 
 def launch_driver():
-    is_github = os.environ.get('GITHUB_ACTIONS') == 'true'
     buster_path = os.environ.get('BUSTER_PATH', '/opt/buster')
     proxy = os.environ.get('PROXY_URL')
     
     options = uc.ChromeOptions()
-    
-    # IMPORTANT: Do NOT use --headless=new here. Xvfb handles virtual display display!
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
@@ -207,12 +221,15 @@ def launch_driver():
     options.add_argument("--disable-notifications")
     options.add_argument("--lang=en-US,en;q=0.9")
     
+    # Hide automated browser fingerprints
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    
     extensions_to_load = []
     if proxy:
         proxy_ext_dir = create_proxy_auth_extension(proxy)
         if proxy_ext_dir:
             extensions_to_load.append(proxy_ext_dir)
-            log("Authenticated Proxy Extension configured")
+            log("Authenticated Proxy Extension configured successfully.")
         else:
             clean_proxy = proxy.replace("http://", "").replace("https://", "")
             options.add_argument(f'--proxy-server=http://{clean_proxy}')
@@ -226,11 +243,18 @@ def launch_driver():
         options.add_argument(f"--load-extension={','.join(extensions_to_load)}")
     
     log("Launching undetected-chromedriver in headed mode (via Xvfb)...")
+    major_ver = get_chrome_major_version()
     try:
+        if major_ver:
+            return uc.Chrome(options=options, version_main=major_ver)
         return uc.Chrome(options=options)
     except Exception as e:
-        log(f"Launch error: {e}")
-        return None
+        log(f"Launch error with explicit version: {e}. Retrying default launch...")
+        try:
+            return uc.Chrome(options=options)
+        except Exception as e2:
+            log(f"Fallback launch failed: {e2}")
+            return None
 
 def run_bot():
     log("=" * 60)
@@ -283,19 +307,25 @@ def run_bot():
         log("Loading registration page...")
         driver.get("https://my.eurodns.com/login/createNewAccount")
         
-        # Turnstile / DOM wait loop
+        # DOM wait loop with network error and Cloudflare detection
         log("Waiting for DOM to render...")
         email_field = None
-        for wait_attempt in range(10):  # Wait up to 50 seconds
+        for wait_attempt in range(10):  # Check up to 50 seconds
             time.sleep(5)
-            page_lower = driver.page_source.lower()
+            page_source = driver.page_source
+            page_lower = page_source.lower()
             
-            # Check if stuck on a challenge screen
-            if "just a moment" in driver.title.lower() or "challenge" in page_lower:
+            # 1. Detect Chrome internal Proxy/Network Connection Errors immediately
+            if "err_tunnel_connection_failed" in page_lower or "err_proxy_connection_failed" in page_lower or "net-error" in page_lower or "chrome://net-error" in page_lower:
+                log("CRITICAL ERROR: Proxy authentication rejected or tunnel failed! (ERR_TUNNEL_CONNECTION_FAILED / ERR_PROXY_CONNECTION_FAILED)")
+                raise Exception("Proxy Authentication Failed or Bad Proxy IP. Verify GitHub Secret formatting: username:password@ip:port")
+            
+            # 2. Check if stuck on a Cloudflare challenge screen
+            if "just a moment" in driver.title.lower() or "challenge" in page_lower or "turnstile" in page_lower:
                 log(f"[Wait {wait_attempt+1}/10] Cloudflare Challenge present, waiting for auto-resolution...")
                 continue
             
-            # Look for email input
+            # 3. Check if email input field is visible
             for xpath in ["//input[@type='email']", "//input[contains(@name, 'email')]", "//input[contains(@id, 'email')]"]:
                 email_field = wait_for_element(driver, By.XPATH, xpath, timeout=3)
                 if email_field:
@@ -316,7 +346,7 @@ def run_bot():
         
         if not email_field:
             log(f"Page Source Snippet:\n{driver.page_source[:600]}")
-            raise Exception("Email field not found after retries. Proxy might be blocked or Cloudflare challenge did not clear.")
+            raise Exception("Email field not found after retries. Proxy blocked or Cloudflare challenge did not clear.")
         
         log("Filling form...")
         smart_fill_field(driver, email_field, email)
