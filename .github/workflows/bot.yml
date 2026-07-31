@@ -26,24 +26,19 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq google-chrome-stable xvfb xserver-xephyr
 
-      - name: Download Buster Extension
+      - name: Download NopeCHA Extension
         run: |
-          echo "Downloading Buster..."
-          LATEST_URL=$(curl -s https://api.github.com/repos/dessant/buster/releases/latest | grep "browser_download_url.*chrome.*zip" | head -1 | cut -d '"' -f 4)
+          echo "Downloading NopeCHA..."
+          # Download official NopeCHA Chrome extension ZIP
+          wget --tries=3 --timeout=30 -q "https://github.com/NopeCHAMP/nopecha-extension/releases/latest/download/nopecha-chrome.zip" -O /tmp/nopecha.zip || \
+          wget --tries=3 --timeout=30 -q "https://github.com/NopeCHAMP/nopecha-extension/releases/download/0.4.8/nopecha-chrome.zip" -O /tmp/nopecha.zip
           
-          if [ -z "$LATEST_URL" ]; then
-            LATEST_URL="https://github.com/dessant/buster/releases/download/v3.1.0/buster-chrome-3.1.0.zip"
-          fi
-          
-          wget --tries=3 --timeout=30 -q "$LATEST_URL" -O /tmp/buster.zip || \
-          wget --tries=3 --timeout=30 -q "https://github.com/dessant/buster/releases/download/v3.1.0/buster-chrome-3.1.0.zip" -O /tmp/buster.zip
-          
-          if [ -f "/tmp/buster.zip" ]; then
-            sudo mkdir -p /opt/buster
-            sudo unzip -q -o /tmp/buster.zip -d /opt/buster
-            ls -la /opt/buster/
+          if [ -f "/tmp/nopecha.zip" ]; then
+            sudo mkdir -p /opt/nopecha
+            sudo unzip -q -o /tmp/nopecha.zip -d /opt/nopecha
+            ls -la /opt/nopecha/
           else
-            mkdir -p /opt/buster
+            mkdir -p /opt/nopecha
           fi
 
       - name: Install Python Dependencies
@@ -54,7 +49,8 @@ jobs:
       - name: Run Bot with Virtual Display
         env:
           GITHUB_ACTIONS: "true"
-          BUSTER_PATH: "/opt/buster"
+          NOPECHA_PATH: "/opt/nopecha"
+          NOPECHA_KEY: ${{ secrets.NOPECHA_KEY }}  # <-- Add this secret in GitHub Repo Settings!
           PYTHONUNBUFFERED: "1"
           PROXY_URL: ${{ secrets.PROXY_URL }}
         run: |
