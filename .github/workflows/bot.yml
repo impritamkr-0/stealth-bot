@@ -5,11 +5,10 @@ on:
   schedule:
     - cron: '0 */6 * * *'
 
-# Add timeout to prevent hanging
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 10  # Force kill after 10 minutes
+    timeout-minutes: 10
     
     steps:
       - name: Checkout Code
@@ -21,43 +20,57 @@ jobs:
           python-version: '3.11'
 
       - name: Install Chrome
-        timeout-minutes: 2
         run: |
           wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
           sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list'
           sudo apt-get update -qq
           sudo apt-get install -y -qq google-chrome-stable
-          google-chrome --version
 
-      - name: Setup VPN (ProtonVPN - More Reliable)
-        timeout-minutes: 2
+      - name: Setup VPN (Optional)
         continue-on-error: true
         run: |
-          # Try ProtonVPN (more reliable CLI than Windscribe)
-          wget -q https://repo.protonvpn.com/debian/dists/stable/main/binary-all/protonvpn-stable-release_1.0.3_all.deb -O /tmp/proton.deb
-          sudo dpkg -i /tmp/proton.deb || true
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq protonvpn-cli || echo "VPN install failed, continuing without"
+          echo "Attempting VPN setup..."
+          # Try OpenVPN (more reliable)
+          sudo apt-get install -y openvpn || echo "OpenVPN not available"
+          echo "VPN setup completed (may have failed)"
 
-      - name: Download Buster
-        timeout-minutes: 2
+      - name: Download Buster Extension
         run: |
-          # Direct download with fallback
-          wget -q "https://github.com/dessant/buster/releases/download/v3.1.0/buster-chrome-3.1.0.zip" -O /tmp/buster.zip || \
-          wget -q "https://github.com/dessant/buster/releases/latest/download/buster-chrome.zip" -O /tmp/buster.zip
+          echo "Downloading Buster..."
+          # Use GitHub releases API to get latest
+          LATEST_URL=$(curl -s https://api.github.com/repos/dessant/buster/releases/latest | grep "browser_download_url.*chrome.*zip" | head -1 | cut -d '"' -f 4)
           
+          # If API fails, use hardcoded fallback
+          if [ -z "$LATEST_URL" ]; then
+            echo "Using fallback URL..."
+            LATEST_URL="https://github.com/dessant/buster/releases/download/v3.1.0/buster-chrome-3.1.0.zip"
+          fi
+          
+          echo "Downloading from: $LATEST_URL"
+          
+          # Download with retry
+          wget --tries=3 --timeout=30 -q "$LATEST_URL" -O /tmp/buster.zip || \
+          wget --tries=3 --timeout=30 -q "https://github.com/dessant/buster/releases/download/v3.1.0/buster-chrome-3.1.0.zip" -O /tmp/buster.zip
+          
+          if [ ! -f "/tmp/buster.zip" ]; then
+            echo "Failed to download Buster, continuing without..."
+            mkdir -p /opt/buster
+            exit 0
+          fi
+          
+          # Extract
           sudo mkdir -p /opt/buster
           sudo unzip -q -o /tmp/buster.zip -d /opt/buster
-          ls -la /opt/buster/
+          
+          echo "Extension contents:"
+          ls -la /opt/buster/ || echo "Directory listing failed"
 
-      - name: Install Dependencies
-        timeout-minutes: 2
+      - name: Install Python Dependencies
         run: |
           pip install -q --upgrade pip
           pip install -q undetected-chromedriver selenium selenium-stealth requests
 
       - name: Run Bot
-        timeout-minutes: 5  # Bot has max 5 minutes
         env:
           GITHUB_ACTIONS: "true"
           BUSTER_PATH: "/opt/buster"
@@ -68,7 +81,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: bot-results-${{ github.run_id }}
+          name: bot-results
           path: |
             screenshot_*.png
             account_credentials.txt
