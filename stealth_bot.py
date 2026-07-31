@@ -89,7 +89,6 @@ def click_submit_button(driver, final=False):
             btn = WebDriverWait(driver, 4).until(
                 EC.element_to_be_clickable((By.XPATH, selector))
             )
-            # Move to element smoothly before clicking
             try:
                 ActionChains(driver).move_to_element(btn).pause(random.uniform(0.2, 0.5)).click().perform()
             except:
@@ -100,80 +99,40 @@ def click_submit_button(driver, final=False):
             continue
     return False
 
-def solve_recaptcha_with_buster(driver):
-    """Attempts to click the reCAPTCHA checkbox and invoke Buster if challenged."""
-    log("Checking for reCAPTCHA widget...")
-    try:
-        time.sleep(2)
-        iframes = driver.find_elements(By.TAG_NAME, "iframe")
-        checkbox_iframe = None
-        challenge_iframe = None
-        
-        for iframe in iframes:
-            src = iframe.get_attribute("src") or ""
-            if "recaptcha" in src:
-                if "anchor" in src:
-                    checkbox_iframe = iframe
-                elif "bframe" in src or "challenge" in src:
-                    challenge_iframe = iframe
-
-        # 1. Click checkbox first if present
-        if checkbox_iframe:
-            driver.switch_to.frame(checkbox_iframe)
-            log("Switched to reCAPTCHA checkbox frame")
-            time.sleep(random.uniform(0.5, 1.2))
-            try:
-                checkbox = driver.find_element(By.ID, "recaptcha-anchor")
-                ActionChains(driver).move_to_element(checkbox).pause(0.3).click().perform()
-                log("Clicked reCAPTCHA checkbox")
-            except:
-                log("Could not click checkbox directly")
-            driver.switch_to.default_content()
-            time.sleep(3)
-
-        # 2. Check if challenge popup opened and trigger Buster
-        iframes = driver.find_elements(By.TAG_NAME, "iframe")
-        for iframe in iframes:
-            src = iframe.get_attribute("src") or ""
-            if "recaptcha" in src and ("bframe" in src or "challenge" in src):
-                challenge_iframe = iframe
-                break
-
-        if challenge_iframe:
-            driver.switch_to.frame(challenge_iframe)
-            log("Switched to challenge popup iframe")
-            time.sleep(1.5)
-            
-            # Look for Buster extension solve button inside the CAPTCHA widget
-            try:
-                buster_btn = driver.find_element(By.XPATH, "//*[@id='solver-button' or contains(@class, 'buster-button')]")
-                driver.execute_script("arguments[0].click();", buster_btn)
-                log("Clicked Buster solver button!")
-                driver.switch_to.default_content()
-                time.sleep(5)
-                return True
-            except:
-                # Fallback to audio button
-                try:
-                    audio_btn = driver.find_element(By.ID, "recaptcha-audio-button")
-                    driver.execute_script("arguments[0].click();", audio_btn)
-                    log("Clicked audio button fallback")
-                except:
-                    pass
-            driver.switch_to.default_content()
-            return True
-            
-        return False
-    except Exception as e:
-        log(f"reCAPTCHA handling error: {e}")
-        driver.switch_to.default_content()
-        return False
-
 def check_for_captcha(driver):
     try:
         return len(driver.find_elements(By.XPATH, "//iframe[contains(@src, 'recaptcha')]")) > 0
     except:
         return False
+
+def wait_for_nopecha_to_solve(driver, max_wait=30):
+    """Allows NopeCHA AI extension time to detect and automatically solve CAPTCHA challenges."""
+    if not check_for_captcha(driver):
+        return True
+    log("reCAPTCHA widget detected! Waiting up to 30s for NopeCHA auto-solve...")
+    for step in range(int(max_wait / 3)):
+        time.sleep(3)
+        # Check if CAPTCHA iframe disappeared or if checkbox became checked
+        if not check_for_captcha(driver):
+            log("CAPTCHA cleared by NopeCHA!")
+            return True
+        # Try to inspect reCAPTCHA anchor to see if 'aria-checked' is true
+        try:
+            iframes = driver.find_elements(By.TAG_NAME, "iframe")
+            for iframe in iframes:
+                src = iframe.get_attribute("src") or ""
+                if "recaptcha" in src and "anchor" in src:
+                    driver.switch_to.frame(iframe)
+                    anchor = driver.find_element(By.ID, "recaptcha-anchor")
+                    checked = anchor.get_attribute("aria-checked")
+                    driver.switch_to.default_content()
+                    if checked == "true":
+                        log("reCAPTCHA checkbox verified by NopeCHA!")
+                        return True
+        except:
+            driver.switch_to.default_content()
+    log("NopeCHA wait completed.")
+    return False
 
 def create_proxy_auth_extension(proxy_str):
     try:
@@ -185,7 +144,7 @@ def create_proxy_auth_extension(proxy_str):
         elif clean_proxy.count(":") == 3:
             host, port, user, password = clean_proxy.split(":", 3)
         else:
-            log("Proxy format unauthenticated or unrecognized (no user/pass found).")
+            log("Proxy format unauthenticated or unrecognized.")
             return None
         
         manifest_json = """
@@ -250,7 +209,7 @@ def create_proxy_auth_extension(proxy_str):
         return None
 
 def build_chrome_options():
-    buster_path = os.environ.get('BUSTER_PATH', '/opt/buster')
+    nopecha_path = os.environ.get('NOPECHA_PATH', '/opt/nopecha')
     proxy = os.environ.get('PROXY_URL')
     
     options = uc.ChromeOptions()
@@ -274,9 +233,9 @@ def build_chrome_options():
                 options.add_argument(f'--proxy-server=http://{clean_proxy}')
                 log(f"Unauthenticated Proxy argument added: {clean_proxy}")
     
-    if os.path.exists(buster_path) and os.path.exists(f"{buster_path}/manifest.json"):
-        extensions_to_load.append(buster_path)
-        log("Buster extension located")
+    if os.path.exists(nopecha_path) and os.path.exists(f"{nopecha_path}/manifest.json"):
+        extensions_to_load.append(nopecha_path)
+        log("NopeCHA extension located")
 
     if extensions_to_load:
         options.add_argument(f"--load-extension={','.join(extensions_to_load)}")
@@ -301,6 +260,19 @@ def launch_driver():
                 log(f"Retry with version_main={major_ver} failed: {e2}")
                 return None
         return None
+
+def activate_nopecha(driver):
+    """Activates NopeCHA API Key in the extension."""
+    nopecha_key = os.environ.get("NOPECHA_KEY", "").strip()
+    if nopecha_key:
+        log("Activating NopeCHA API key...")
+        try:
+            # Visiting NopeCHA setup URL registers the API key with the extension
+            driver.get(f"https://nopecha.com/setup#key={nopecha_key}")
+            time.sleep(3)
+            log("NopeCHA API Key configured!")
+        except Exception as e:
+            log(f"NopeCHA activation warning: {e}")
 
 def run_bot():
     log("=" * 60)
@@ -350,6 +322,10 @@ def run_bot():
     driver.implicitly_wait(5)
     
     try:
+        # 1. Activate NopeCHA API key first
+        activate_nopecha(driver)
+        
+        # 2. Navigate to Registration page
         log("Loading registration page...")
         driver.get("https://my.eurodns.com/login/createNewAccount")
         
@@ -417,8 +393,8 @@ def run_bot():
         if is_github:
             driver.save_screenshot("screenshot_02_filled.png")
         
-        # Check and attempt to solve CAPTCHA before initial submit
-        solve_recaptcha_with_buster(driver)
+        # Give NopeCHA time to detect and clear CAPTCHA before submitting
+        wait_for_nopecha_to_solve(driver, max_wait=20)
         time.sleep(2)
         
         log("Submitting form...")
@@ -428,10 +404,11 @@ def run_bot():
         if is_github:
             driver.save_screenshot("screenshot_03_submitted.png")
         
+        # Check if CAPTCHA challenge appeared after submission
         if check_for_captcha(driver):
-            log("CAPTCHA detected after submit!")
-            solve_recaptcha_with_buster(driver)
-            time.sleep(5)
+            log("CAPTCHA challenge detected after submit!")
+            wait_for_nopecha_to_solve(driver, max_wait=25)
+            time.sleep(3)
             if is_github:
                 driver.save_screenshot("screenshot_04_captcha.png")
         
