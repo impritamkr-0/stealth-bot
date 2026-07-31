@@ -1,14 +1,14 @@
-name: Run Stealth Bot (WARP VPN)
+name: Run Stealth Bot (Windscribe + Buster)
 
 on:
-  workflow_dispatch: 
+  workflow_dispatch:
   schedule:
-    - cron: '0 14 * * *' 
+    - cron: '0 */6 * * *'  # Every 6 hours for fresh IP
 
 jobs:
   run-automation:
     runs-on: ubuntu-latest
-
+    
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -18,41 +18,99 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Google Chrome
+      - name: Install System Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y wget gnupg
+          sudo apt-get install -y wget gnupg curl unzip apt-transport-https ca-certificates
+
+      - name: Install Google Chrome
+        run: |
           wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
           sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list'
           sudo apt-get update
           sudo apt-get install -y google-chrome-stable
 
-      - name: Install and Connect Cloudflare WARP
+      - name: Install and Connect Windscribe VPN
         run: |
-          curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | sudo gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
-          echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflare-client.list
-          sudo apt-get update && sudo apt-get install -y cloudflare-warp
+          # Install Windscribe
+          sudo apt-get install -y windscribe-cli || (
+            curl -fsSL https://windscribe.com/install/desktop/linux_deb_x64 > /tmp/windscribe.deb
+            sudo dpkg -i /tmp/windscribe.deb || sudo apt-get install -f -y
+          )
           
-          # Register and start WARP service non-interactively
-          warp-cli --accept-tos registration new || true
-          warp-cli --accept-tos connect
+          # Login
+          windscribe login <<EOF
+          ${{ secrets.WINDSCRIBE_USERNAME }}
+          ${{ secrets.WINDSCRIBE_PASSWORD }}
+          EOF
+          
+          # Connect to best location
+          windscribe connect best
           sleep 5
-          warp-cli --accept-tos status || true
+          
+          # Verify IP changed
+          echo "Connected! IP:"
+          curl -s https://ipinfo.io/ip
+
+      - name: Download and Setup Buster Extension
+        run: |
+          # Get latest Buster release URL
+          BUSTER_URL=$(curl -s https://api.github.com/repos/dessant/buster/releases/latest | \
+            grep "browser_download_url.*chrome-web-store.*\.zip" | cut -d '"' -f 4)
+          
+          # If not found, try alternative
+          if [ -z "$BUSTER_URL" ]; then
+            BUSTER_URL="https://github.com/dessant/buster/releases/download/v3.1.0/buster-chrome-3.1.0.zip"
+          fi
+          
+          echo "Downloading Buster from: $BUSTER_URL"
+          wget -q "$BUSTER_URL" -O /tmp/buster.zip
+          
+          # Extract
+          sudo mkdir -p /opt/buster
+          sudo unzip -q /tmp/buster.zip -d /opt/buster
+          
+          # List contents
+          echo "Buster contents:"
+          ls -la /opt/buster/
+          
+          # Verify manifest exists
+          if [ -f "/opt/buster/manifest.json" ]; then
+            echo "✓ Buster extension ready"
+          else
+            echo "! manifest.json not found, checking subdirectories..."
+            find /opt/buster -name "manifest.json" | head -1
+          fi
 
       - name: Install Python Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install undetected-chromedriver selenium selenium-stealth requests
 
-      - name: Run Bot Script
+      - name: Run Bot
         env:
           GITHUB_ACTIONS: "true"
-        run: python stealth_bot.py
+          BUSTER_PATH: "/opt/buster"
+        run: |
+          echo "Starting bot with Windscribe + Buster..."
+          python stealth_bot.py
 
-      - name: Upload Debug Screenshot on Failure
-        if: failure()
+      - name: Disconnect VPN
+        if: always()
+        run: windscribe disconnect || true
+
+      - name: Upload Screenshots
         uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: bot-debug-screenshot
-          path: debug_error_visual_flow.png
+          name: bot-screenshots
+          path: screenshot_*.png
+          if-no-files-found: ignore
+
+      - name: Upload Credentials
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: account-credentials
+          path: account_credentials.txt
           if-no-files-found: ignore
