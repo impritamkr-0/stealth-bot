@@ -145,13 +145,10 @@ def check_for_captcha(driver):
         return False
 
 def launch_driver():
-    """Launch Chrome with proper version matching"""
+    """Launch Chrome with version 150"""
     is_github = os.environ.get('GITHUB_ACTIONS') == 'true'
     buster_path = os.environ.get('BUSTER_PATH', '/opt/buster')
     proxy = os.environ.get('PROXY_URL')
-    
-    # Get Chrome version first
-    chrome_version = get_chrome_version()
     
     # Create fresh options
     options = uc.ChromeOptions()
@@ -165,29 +162,34 @@ def launch_driver():
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--disable-notifications")
     
-    # Add proxy if set (format: ip:port)
     if proxy:
         options.add_argument(f'--proxy-server=http://{proxy}')
         log(f"Proxy: {proxy}")
     
-    # Load Buster
     if os.path.exists(buster_path) and os.path.exists(f"{buster_path}/manifest.json"):
         options.add_argument(f"--load-extension={buster_path}")
         log("Buster loaded")
     
-    # Launch with version matching
-    log(f"Launching Chrome...")
+    # Launch with version 150 (hardcoded to match actual Chrome)
+    log("Launching Chrome...")
     try:
-        if chrome_version:
-            log(f"Using Chrome version: {chrome_version}")
-            return uc.Chrome(options=options, version_main=chrome_version)
-        else:
-            return uc.Chrome(options=options)
+        return uc.Chrome(options=options, version_main=150)
     except Exception as e:
         log(f"Launch error: {e}")
-        # Retry without version specification
-        log("Retrying with auto-detect...")
-        return uc.Chrome(options=options)
+        # Fallback - create fresh options again!
+        options = uc.ChromeOptions()
+        if is_github:
+            options.add_argument("--headless=new")
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-dev-shm-usage")
+            options.add_argument("--disable-gpu")
+        options.add_argument("--window-size=1920,1080")
+        options.add_argument("--disable-notifications")
+        if proxy:
+            options.add_argument(f'--proxy-server=http://{proxy}')
+        if os.path.exists(buster_path):
+            options.add_argument(f"--load-extension={buster_path}")
+        return uc.Chrome(options=options)  # Auto-detect
 
 def run_bot():
     log("=" * 60)
