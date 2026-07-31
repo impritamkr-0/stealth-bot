@@ -4,9 +4,8 @@ import time
 import random
 import string
 import tempfile
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
+import subprocess
+import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -16,6 +15,19 @@ TARGET_URL = "https://eurodns.pxf.io/PzkDy6"
 
 def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+
+def get_chrome_major_version():
+    """Detects installed major Google Chrome version on Linux/Ubuntu runners."""
+    try:
+        output = subprocess.check_output(['google-chrome', '--version'], text=True)
+        # e.g., "Google Chrome 150.0.7871.0" -> 150
+        version_str = output.strip().split()[-1]
+        major = int(version_str.split('.')[0])
+        log(f"Detected Google Chrome Major Version: {major}")
+        return major
+    except Exception as e:
+        log(f"Version detection failed: {e}")
+        return 150 # Default fallback to 150 for Ubuntu runners
 
 def generate_random_email():
     domains = ["1secmail.com", "1secmail.net", "1secmail.org"]
@@ -32,7 +44,7 @@ def generate_strong_password():
     password = ''.join(random.sample(password, len(password)))
     return password
 
-def wait_for_element(driver, by, value, timeout=15):
+def wait_for_element(driver, by, value, timeout=20):
     try:
         return WebDriverWait(driver, timeout).until(
             EC.presence_of_element_located((by, value))
@@ -199,12 +211,7 @@ def launch_driver():
     buster_path = os.environ.get('BUSTER_PATH', '/opt/buster')
     proxy = os.environ.get('PROXY_URL')
     
-    options = Options()
-    
-    # Hide automation banners and automation flags
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    options.add_experimental_option('useAutomationExtension', False)
-    options.add_argument("--disable-blink-features=AutomationControlled")
+    options = uc.ChromeOptions()
     
     if is_github:
         options.add_argument("--headless=new")
@@ -234,14 +241,19 @@ def launch_driver():
     if extensions_to_load:
         options.add_argument(f"--load-extension={','.join(extensions_to_load)}")
     
-    log("Launching Chrome using Selenium Manager (Auto-matching driver)...")
+    log("Launching undetected-chromedriver...")
+    chrome_version = get_chrome_major_version()
+    
     try:
-        # Standard Selenium driver handles driver matching automatically!
-        driver = webdriver.Chrome(options=options)
-        return driver
+        # Pass exact major version to prevent 150 vs 151 ChromeDriver crash
+        return uc.Chrome(options=options, version_main=chrome_version)
     except Exception as e:
-        log(f"Launch error: {e}")
-        return None
+        log(f"Launch error with version_main={chrome_version}: {e}")
+        try:
+            return uc.Chrome(options=options)
+        except Exception as e2:
+            log(f"Fallback launch failed: {e2}")
+            return None
 
 def run_bot():
     log("=" * 60)
@@ -277,7 +289,6 @@ def run_bot():
         sys.exit(1)
     
     try:
-        # Apply selenium-stealth to mask headless Selenium detection
         stealth(driver,
             languages=["en-US", "en"],
             vendor="Google Inc.",
@@ -295,8 +306,15 @@ def run_bot():
         log("Loading registration page...")
         driver.get("https://my.eurodns.com/login/createNewAccount")
         
-        body = wait_for_element(driver, By.TAG_NAME, "body", timeout=20)
-        time.sleep(5)
+        # Check if Cloudflare challenge page is blocking us and wait for auto-redirect
+        time.sleep(6)
+        if "just a moment" in driver.title.lower() or "cloudflare" in driver.page_source.lower():
+            log("Cloudflare Challenge detected. Waiting up to 25s for redirect...")
+            for _ in range(5):
+                time.sleep(5)
+                if "just a moment" not in driver.title.lower():
+                    log("Cloudflare challenge bypassed!")
+                    break
         
         log(f"Current Page Title: {driver.title}")
         log(f"Current URL: {driver.current_url}")
@@ -305,8 +323,15 @@ def run_bot():
             driver.save_screenshot("screenshot_01_loaded.png")
         
         log("Filling form...")
-        email_field = wait_for_element(driver, By.XPATH, "//input[@type='email']", timeout=20)
+        # Check multiple XPATH variations for email field
+        email_field = None
+        for xpath in ["//input[@type='email']", "//input[contains(@name, 'email')]", "//input[contains(@id, 'email')]"]:
+            email_field = wait_for_element(driver, By.XPATH, xpath, timeout=10)
+            if email_field:
+                break
+                
         if not email_field:
+            log(f"Page Source Snippet:\n{driver.page_source[:500]}")
             raise Exception("Email field not found. Proxy might be blocked or page failed to load.")
         
         smart_fill_field(driver, email_field, email)
