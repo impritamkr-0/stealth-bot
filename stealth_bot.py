@@ -51,6 +51,23 @@ def wait_for_element(driver, by, value, timeout=20):
     except:
         return None
 
+def wait_for_cloudflare_clear(driver, max_wait=30):
+    """Waits for Cloudflare 'Just a moment...' Turnstile screen to clear."""
+    start_time = time.time()
+    while time.time() - start_time < max_wait:
+        page_source = driver.page_source.lower()
+        title = driver.title.lower()
+        
+        if "just a moment" in title or "cf-challenge" in page_source or "turnstile" in page_source:
+            log("Cloudflare Turnstile challenge active. Waiting for auto-bypass...")
+            time.sleep(3)
+        else:
+            log("Page rendered cleanly (No Cloudflare challenge blocking).")
+            return True
+            
+    log("Cloudflare wait completed.")
+    return False
+
 def dismiss_cookie_banner(driver):
     """Detects and clicks 'Accept All' on cookie consent overlays/modals."""
     log("Checking for cookie consent banner...")
@@ -307,28 +324,29 @@ def launch_driver():
         return None
 
 def navigate_via_affiliate_and_menu(driver):
-    """Navigates to TARGET_URL first, clears cookies popup, then clicks My Account -> New Account."""
+    """Navigates to affiliate link, clears Cloudflare + cookies, then clicks My Account -> New Account."""
     log(f"Loading affiliate link: {TARGET_URL}")
     driver.get(TARGET_URL)
-    time.sleep(5)
+    time.sleep(3)
     
-    # Dismiss cookie banner immediately upon loading affiliate site
+    # 1. Clear any initial Cloudflare Turnstile challenge on affiliate entry
+    wait_for_cloudflare_clear(driver, max_wait=30)
     dismiss_cookie_banner(driver)
     time.sleep(2)
     
-    # 1. Click 'My account' / Account icon in the top right
+    # 2. Click 'My account' / Account icon in the top right
     log("Looking for 'My account' menu in top right...")
     account_selectors = [
         "//a[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'my account')]",
         "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'my account')]",
         "//a[contains(@href, '/login') or contains(@href, '/account')]",
-        "//*[contains(@class, 'account') or contains(@class, 'user')]/a"
+        "//header//*[contains(@class, 'user') or contains(@class, 'account')]"
     ]
     clicked_account = False
     for sel in account_selectors:
         try:
             btn = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.XPATH, sel)))
-            driver.execute_script("arguments[0].click();", btn)
+            ActionChains(driver).move_to_element(btn).pause(0.5).click().perform()
             log(f"Clicked My Account menu using: {sel}")
             clicked_account = True
             time.sleep(3)
@@ -340,7 +358,7 @@ def navigate_via_affiliate_and_menu(driver):
     if not clicked_account:
         log("WARNING: Could not click 'My account' menu directly. Continuing...")
 
-    # 2. Click 'New account' / 'Create account' link
+    # 3. Click 'New account' / 'Create account' link
     log("Looking for 'New account' / 'Create account' option...")
     new_account_selectors = [
         "//a[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'new account')]",
@@ -351,7 +369,7 @@ def navigate_via_affiliate_and_menu(driver):
     for sel in new_account_selectors:
         try:
             btn = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.XPATH, sel)))
-            driver.execute_script("arguments[0].click();", btn)
+            ActionChains(driver).move_to_element(btn).pause(0.5).click().perform()
             log(f"Clicked New Account option using: {sel}")
             time.sleep(3)
             dismiss_cookie_banner(driver)
@@ -363,6 +381,7 @@ def navigate_via_affiliate_and_menu(driver):
     log("Fallback: Directing to createNewAccount URL while keeping affiliate cookies...")
     driver.get("https://my.eurodns.com/login/createNewAccount")
     time.sleep(4)
+    wait_for_cloudflare_clear(driver, max_wait=30)
     dismiss_cookie_banner(driver)
     return True
 
