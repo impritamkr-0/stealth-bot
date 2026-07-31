@@ -26,34 +26,24 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq google-chrome-stable xvfb xserver-xephyr
 
-      - name: Download NopeCHA Extension (Reliable Multi-Source)
+      - name: Download & Unpack NopeCHA Extension
         run: |
-          echo "Downloading NopeCHA extension..."
+          echo "Downloading NopeCHA extension via Python..."
           sudo mkdir -p /opt/nopecha
-          
-          # 1. Try downloading from the official NopeCHALLC repo archive
-          wget --tries=3 --timeout=25 -q "https://github.com/NopeCHALLC/nopecha-extension/archive/refs/heads/main.zip" -O /tmp/nopecha.zip || true
-          
-          # 2. Fallback to official v0.4.8 release tag archive from NopeCHALLC
-          if [ ! -s "/tmp/nopecha.zip" ]; then
-            wget --tries=3 --timeout=25 -q "https://github.com/NopeCHALLC/nopecha-extension/archive/refs/tags/0.4.8.zip" -O /tmp/nopecha.zip || true
-          fi
-
-          # 3. Final Fallback: Download CRX directly from Google Chrome Web Store
-          if [ ! -s "/tmp/nopecha.zip" ]; then
-            echo "Fetching from Chrome Web Store..."
-            wget --tries=3 --timeout=25 -q "https://clients2.google.com/service/update2/crx?response=redirect&prodversion=130.0&acceptformat=crx2,crx3&x=id%3Ddknlfmjaanfblgfdfebhijalfmhmjjjo%26uc" -O /tmp/nopecha.zip || true
-          fi
-          
-          # Unpack cleanly into /opt/nopecha
-          if [ -s "/tmp/nopecha.zip" ]; then
-            sudo unzip -q -o /tmp/nopecha.zip -d /tmp/nopecha_unpacked || true
-            # Copy all extracted extension files directly into /opt/nopecha
-            sudo cp -r /tmp/nopecha_unpacked/*/* /opt/nopecha/ 2>/dev/null || sudo cp -r /tmp/nopecha_unpacked/* /opt/nopecha/
-            ls -la /opt/nopecha/
-          else
-            echo "Warning: All download mirrors failed. Running browser without NopeCHA."
-          fi
+          python3 -c "
+          import urllib.request, zipfile, os
+          url = 'https://clients2.google.com/service/update2/crx?response=redirect&prodversion=130.0&acceptformat=crx2,crx3&x=id%3Ddknlfmjaanfblgfdfebhijalfmhmjjjo%26uc'
+          try:
+              req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+              with urllib.request.urlopen(req, timeout=30) as resp, open('/tmp/nopecha.zip', 'wb') as f:
+                  f.write(resp.read())
+              with zipfile.ZipFile('/tmp/nopecha.zip', 'r') as z:
+                  z.extractall('/opt/nopecha')
+              print('NopeCHA downloaded and unpacked successfully!')
+          except Exception as e:
+              print('Error downloading NopeCHA:', e)
+          "
+          ls -la /opt/nopecha/
 
       - name: Install Python Dependencies
         run: |
