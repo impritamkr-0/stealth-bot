@@ -40,8 +40,8 @@ jobs:
           
           # Login
           windscribe login <<EOF
-          ${{ secrets.WINDSCRIBE_USERNAME }}
-          ${{ secrets.WINDSCRIBE_PASSWORD }}
+          ${{ secrets.mandymild }}
+          ${{ secrets.irIR12@$ }}
           EOF
           
           # Connect to best location
