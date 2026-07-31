@@ -4,7 +4,6 @@ import time
 import random
 import string
 import tempfile
-import subprocess
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -15,19 +14,6 @@ TARGET_URL = "https://eurodns.pxf.io/PzkDy6"
 
 def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
-
-def get_chrome_major_version():
-    """Detects installed major Google Chrome version on Linux/Ubuntu runners."""
-    try:
-        output = subprocess.check_output(['google-chrome', '--version'], text=True)
-        # e.g., "Google Chrome 150.0.7871.0" -> 150
-        version_str = output.strip().split()[-1]
-        major = int(version_str.split('.')[0])
-        log(f"Detected Google Chrome Major Version: {major}")
-        return major
-    except Exception as e:
-        log(f"Version detection failed: {e}")
-        return 150 # Default fallback to 150 for Ubuntu runners
 
 def generate_random_email():
     domains = ["1secmail.com", "1secmail.net", "1secmail.org"]
@@ -218,11 +204,13 @@ def launch_driver():
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
+        # Mask headless user agent
+        options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
     
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--disable-notifications")
+    options.add_argument("--lang=en-US,en;q=0.9")
     
-    # Handle authenticated Webshare proxy via extension
     extensions_to_load = []
     if proxy:
         proxy_ext_dir = create_proxy_auth_extension(proxy)
@@ -242,18 +230,12 @@ def launch_driver():
         options.add_argument(f"--load-extension={','.join(extensions_to_load)}")
     
     log("Launching undetected-chromedriver...")
-    chrome_version = get_chrome_major_version()
-    
     try:
-        # Pass exact major version to prevent 150 vs 151 ChromeDriver crash
-        return uc.Chrome(options=options, version_main=chrome_version)
+        # Let UC auto-detect matching version without passing explicit integer
+        return uc.Chrome(options=options)
     except Exception as e:
-        log(f"Launch error with version_main={chrome_version}: {e}")
-        try:
-            return uc.Chrome(options=options)
-        except Exception as e2:
-            log(f"Fallback launch failed: {e2}")
-            return None
+        log(f"Launch error: {e}")
+        return None
 
 def run_bot():
     log("=" * 60)
@@ -306,15 +288,29 @@ def run_bot():
         log("Loading registration page...")
         driver.get("https://my.eurodns.com/login/createNewAccount")
         
-        # Check if Cloudflare challenge page is blocking us and wait for auto-redirect
-        time.sleep(6)
-        if "just a moment" in driver.title.lower() or "cloudflare" in driver.page_source.lower():
-            log("Cloudflare Challenge detected. Waiting up to 25s for redirect...")
-            for _ in range(5):
-                time.sleep(5)
-                if "just a moment" not in driver.title.lower():
-                    log("Cloudflare challenge bypassed!")
+        # Robust Cloudflare Turnstile & empty DOM wait loop
+        log("Waiting for DOM to render...")
+        email_field = None
+        for wait_attempt in range(8):  # Check up to 40 seconds
+            time.sleep(5)
+            # Check if we are stuck on a challenge screen
+            page_lower = driver.page_source.lower()
+            if "just a moment" in driver.title.lower() or "challenge" in page_lower:
+                log(f"[Wait {wait_attempt+1}/8] Cloudflare Challenge present, waiting...")
+                continue
+            
+            # Check if page rendered the email input
+            for xpath in ["//input[@type='email']", "//input[contains(@name, 'email')]", "//input[contains(@id, 'email')]"]:
+                email_field = wait_for_element(driver, By.XPATH, xpath, timeout=3)
+                if email_field:
                     break
+            
+            if email_field:
+                log("Registration form loaded successfully!")
+                break
+            else:
+                log(f"[Wait {wait_attempt+1}/8] Form not visible yet. Refreshing page...")
+                driver.refresh()
         
         log(f"Current Page Title: {driver.title}")
         log(f"Current URL: {driver.current_url}")
@@ -322,18 +318,11 @@ def run_bot():
         if is_github:
             driver.save_screenshot("screenshot_01_loaded.png")
         
-        log("Filling form...")
-        # Check multiple XPATH variations for email field
-        email_field = None
-        for xpath in ["//input[@type='email']", "//input[contains(@name, 'email')]", "//input[contains(@id, 'email')]"]:
-            email_field = wait_for_element(driver, By.XPATH, xpath, timeout=10)
-            if email_field:
-                break
-                
         if not email_field:
-            log(f"Page Source Snippet:\n{driver.page_source[:500]}")
-            raise Exception("Email field not found. Proxy might be blocked or page failed to load.")
+            log(f"Page Source Snippet:\n{driver.page_source[:600]}")
+            raise Exception("Email field not found after retries. Proxy might be blocked or Cloudflare challenge did not clear.")
         
+        log("Filling form...")
         smart_fill_field(driver, email_field, email)
         log("Email filled")
         time.sleep(1)
