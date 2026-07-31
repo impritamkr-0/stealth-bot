@@ -26,30 +26,33 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq google-chrome-stable xvfb xserver-xephyr
 
-      - name: Download NopeCHA Extension
+      - name: Download NopeCHA Extension (Reliable Multi-Source)
         run: |
           echo "Downloading NopeCHA extension..."
           sudo mkdir -p /opt/nopecha
           
-          # 1. Try downloading latest NopeCHA release ZIP from GitHub tags
-          LATEST_TAG=$(curl -s https://api.github.com/repos/NopeCHAMP/nopecha-extension/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-          if [ -n "$LATEST_TAG" ]; then
-            wget --tries=3 --timeout=30 -q "https://github.com/NopeCHAMP/nopecha-extension/archive/refs/tags/${LATEST_TAG}.zip" -O /tmp/nopecha.zip || true
-          fi
+          # 1. Try downloading from the official NopeCHALLC repo archive
+          wget --tries=3 --timeout=25 -q "https://github.com/NopeCHALLC/nopecha-extension/archive/refs/heads/main.zip" -O /tmp/nopecha.zip || true
           
-          # 2. Fallback: Download default main branch archive if release tag ZIP failed
+          # 2. Fallback to official v0.4.8 release tag archive from NopeCHALLC
           if [ ! -s "/tmp/nopecha.zip" ]; then
-            wget --tries=3 --timeout=30 -q "https://github.com/NopeCHAMP/nopecha-extension/archive/refs/heads/main.zip" -O /tmp/nopecha.zip || true
+            wget --tries=3 --timeout=25 -q "https://github.com/NopeCHALLC/nopecha-extension/archive/refs/tags/0.4.8.zip" -O /tmp/nopecha.zip || true
+          fi
+
+          # 3. Final Fallback: Download CRX directly from Google Chrome Web Store
+          if [ ! -s "/tmp/nopecha.zip" ]; then
+            echo "Fetching from Chrome Web Store..."
+            wget --tries=3 --timeout=25 -q "https://github.com/clients2.google.com/service/update2/crx?response=redirect&prodversion=130.0&acceptformat=crx2,crx3&x=id%3Ddknlfmjaanfblgfdfebhijalfmhmjjjo%26uc" -O /tmp/nopecha.zip || true
           fi
           
-          # 3. Unpack extension cleanly into /opt/nopecha
+          # Unpack cleanly into /opt/nopecha
           if [ -s "/tmp/nopecha.zip" ]; then
-            sudo unzip -q -o /tmp/nopecha.zip -d /tmp/nopecha_unpacked
-            # Move inner directory contents directly into /opt/nopecha
+            sudo unzip -q -o /tmp/nopecha.zip -d /tmp/nopecha_unpacked || true
+            # Copy all extracted extension files directly into /opt/nopecha
             sudo cp -r /tmp/nopecha_unpacked/*/* /opt/nopecha/ 2>/dev/null || sudo cp -r /tmp/nopecha_unpacked/* /opt/nopecha/
             ls -la /opt/nopecha/
           else
-            echo "Warning: Could not download NopeCHA ZIP. Running without extension."
+            echo "Warning: All download mirrors failed. Running browser without NopeCHA."
           fi
 
       - name: Install Python Dependencies
