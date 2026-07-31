@@ -4,11 +4,13 @@ import time
 import random
 import string
 import tempfile
+import subprocess
 import re
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.action_chains import ActionChains
 from selenium_stealth import stealth
 
 TARGET_URL = "https://eurodns.pxf.io/PzkDy6"
@@ -51,13 +53,19 @@ def wait_for_element(driver, by, value, timeout=20):
     except:
         return None
 
+def human_type(element, text):
+    """Simulates realistic human typing speed to lower bot detection scores."""
+    element.clear()
+    for char in text:
+        element.send_keys(char)
+        time.sleep(random.uniform(0.05, 0.15))
+
 def smart_fill_field(driver, element, text):
     try:
         driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
-        time.sleep(0.3)
-        element.clear()
-        element.send_keys(text)
-        time.sleep(0.3)
+        time.sleep(random.uniform(0.3, 0.7))
+        human_type(element, text)
+        time.sleep(random.uniform(0.2, 0.5))
         if element.get_attribute("value") == text:
             return True
         driver.execute_script(f"arguments[0].value = '{text}';", element)
@@ -78,52 +86,86 @@ def click_submit_button(driver, final=False):
     
     for selector in selectors:
         try:
-            btn = WebDriverWait(driver, 3).until(
+            btn = WebDriverWait(driver, 4).until(
                 EC.element_to_be_clickable((By.XPATH, selector))
             )
-            driver.execute_script("arguments[0].click();", btn)
-            log("Submit clicked")
+            # Move to element smoothly before clicking
+            try:
+                ActionChains(driver).move_to_element(btn).pause(random.uniform(0.2, 0.5)).click().perform()
+            except:
+                driver.execute_script("arguments[0].click();", btn)
+            log("Submit button clicked")
             return True
         except:
             continue
     return False
 
-def click_audio_button(driver):
-    log("Switching to audio CAPTCHA...")
+def solve_recaptcha_with_buster(driver):
+    """Attempts to click the reCAPTCHA checkbox and invoke Buster if challenged."""
+    log("Checking for reCAPTCHA widget...")
     try:
         time.sleep(2)
         iframes = driver.find_elements(By.TAG_NAME, "iframe")
+        checkbox_iframe = None
         challenge_iframe = None
+        
         for iframe in iframes:
             src = iframe.get_attribute("src") or ""
-            if "recaptcha" in src and ("challenge" in src or "bframe" in src):
+            if "recaptcha" in src:
+                if "anchor" in src:
+                    checkbox_iframe = iframe
+                elif "bframe" in src or "challenge" in src:
+                    challenge_iframe = iframe
+
+        # 1. Click checkbox first if present
+        if checkbox_iframe:
+            driver.switch_to.frame(checkbox_iframe)
+            log("Switched to reCAPTCHA checkbox frame")
+            time.sleep(random.uniform(0.5, 1.2))
+            try:
+                checkbox = driver.find_element(By.ID, "recaptcha-anchor")
+                ActionChains(driver).move_to_element(checkbox).pause(0.3).click().perform()
+                log("Clicked reCAPTCHA checkbox")
+            except:
+                log("Could not click checkbox directly")
+            driver.switch_to.default_content()
+            time.sleep(3)
+
+        # 2. Check if challenge popup opened and trigger Buster
+        iframes = driver.find_elements(By.TAG_NAME, "iframe")
+        for iframe in iframes:
+            src = iframe.get_attribute("src") or ""
+            if "recaptcha" in src and ("bframe" in src or "challenge" in src):
                 challenge_iframe = iframe
                 break
-        
+
         if challenge_iframe:
             driver.switch_to.frame(challenge_iframe)
-            log("Switched to challenge iframe")
-            time.sleep(1)
+            log("Switched to challenge popup iframe")
+            time.sleep(1.5)
+            
+            # Look for Buster extension solve button inside the CAPTCHA widget
             try:
-                btn = driver.find_element(By.ID, "recaptcha-audio-button")
-                driver.execute_script("arguments[0].click();", btn)
-                log("Audio button clicked")
+                buster_btn = driver.find_element(By.XPATH, "//*[@id='solver-button' or contains(@class, 'buster-button')]")
+                driver.execute_script("arguments[0].click();", buster_btn)
+                log("Clicked Buster solver button!")
                 driver.switch_to.default_content()
+                time.sleep(5)
                 return True
             except:
-                for sel in ["//button[contains(@class, 'rc-button-audio')]", "//button[@title='Get an audio challenge']"]:
-                    try:
-                        btn = driver.find_element(By.XPATH, sel)
-                        driver.execute_script("arguments[0].click();", btn)
-                        log("Audio button clicked (alt)")
-                        driver.switch_to.default_content()
-                        return True
-                    except:
-                        continue
-        driver.switch_to.default_content()
+                # Fallback to audio button
+                try:
+                    audio_btn = driver.find_element(By.ID, "recaptcha-audio-button")
+                    driver.execute_script("arguments[0].click();", audio_btn)
+                    log("Clicked audio button fallback")
+                except:
+                    pass
+            driver.switch_to.default_content()
+            return True
+            
         return False
     except Exception as e:
-        log(f"Audio button error: {e}")
+        log(f"reCAPTCHA handling error: {e}")
         driver.switch_to.default_content()
         return False
 
@@ -134,11 +176,8 @@ def check_for_captcha(driver):
         return False
 
 def create_proxy_auth_extension(proxy_str):
-    """Creates a temporary Chrome extension to authenticate proxies automatically."""
     try:
         clean_proxy = proxy_str.replace("http://", "").replace("https://", "").strip()
-        
-        # Support both 'user:pass@ip:port' and 'ip:port:user:pass' formats
         if "@" in clean_proxy:
             auth, host_port = clean_proxy.split("@", 1)
             user, password = auth.split(":", 1)
@@ -211,7 +250,6 @@ def create_proxy_auth_extension(proxy_str):
         return None
 
 def build_chrome_options():
-    """Generates a fresh ChromeOptions object to avoid reuse crashes."""
     buster_path = os.environ.get('BUSTER_PATH', '/opt/buster')
     proxy = os.environ.get('PROXY_URL')
     
@@ -247,16 +285,12 @@ def build_chrome_options():
 
 def launch_driver():
     major_ver = get_chrome_major_version()
-    
     log(f"Launching undetected-chromedriver with explicit version_main={major_ver}...")
     try:
-        # 1. First attempt: Launch directly with the detected version (e.g. 150)
         return uc.Chrome(options=build_chrome_options(), version_main=major_ver)
     except Exception as e:
         err_msg = str(e)
         log(f"Default launch failed: {err_msg}")
-        
-        # 2. If ChromeDriver version mismatch occurs, extract browser version from error message
         match = re.search(r"Current browser version is (\d+)", err_msg)
         if match:
             major_ver = int(match.group(1))
@@ -319,25 +353,21 @@ def run_bot():
         log("Loading registration page...")
         driver.get("https://my.eurodns.com/login/createNewAccount")
         
-        # DOM wait loop with network error and Cloudflare detection
         log("Waiting for DOM to render...")
         email_field = None
-        for wait_attempt in range(10):  # Check up to 50 seconds
+        for wait_attempt in range(10):
             time.sleep(5)
             page_source = driver.page_source
             page_lower = page_source.lower()
             
-            # 1. Detect Chrome internal Proxy/Network Connection Errors immediately
             if "err_tunnel_connection_failed" in page_lower or "err_proxy_connection_failed" in page_lower or "net-error" in page_lower or "chrome://net-error" in page_lower:
                 log("CRITICAL ERROR: Proxy authentication rejected or tunnel failed!")
                 raise Exception("Proxy Authentication Failed or Bad Proxy IP.")
             
-            # 2. Check if stuck on a Cloudflare challenge screen
             if "just a moment" in driver.title.lower() or "challenge" in page_lower or "turnstile" in page_lower:
                 log(f"[Wait {wait_attempt+1}/10] Cloudflare Challenge present, waiting for auto-resolution...")
                 continue
             
-            # 3. Check if email input field is visible
             for xpath in ["//input[@type='email']", "//input[contains(@name, 'email')]", "//input[contains(@id, 'email')]"]:
                 email_field = wait_for_element(driver, By.XPATH, xpath, timeout=3)
                 if email_field:
@@ -357,22 +387,20 @@ def run_bot():
             driver.save_screenshot("screenshot_01_loaded.png")
         
         if not email_field:
-            log(f"Page Source Snippet:\n{driver.page_source[:600]}")
             raise Exception("Email field not found after retries. Proxy blocked or Cloudflare challenge did not clear.")
         
-        log("Filling form...")
+        log("Filling form with human delays...")
         smart_fill_field(driver, email_field, email)
         log("Email filled")
-        time.sleep(1)
+        time.sleep(random.uniform(1.0, 2.0))
         
-        # Bulletproof Password Filling (handles 1 or 2 password fields cleanly)
         log("Looking for password fields...")
         pass_fields = driver.find_elements(By.XPATH, "//input[@type='password' or contains(translate(@name, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'password')]")
         
         if len(pass_fields) >= 1:
             smart_fill_field(driver, pass_fields[0], password)
             log("Primary password filled")
-            time.sleep(0.5)
+            time.sleep(random.uniform(0.5, 1.2))
             if len(pass_fields) >= 2:
                 smart_fill_field(driver, pass_fields[1], password)
                 log("Confirm password filled")
@@ -389,6 +417,10 @@ def run_bot():
         if is_github:
             driver.save_screenshot("screenshot_02_filled.png")
         
+        # Check and attempt to solve CAPTCHA before initial submit
+        solve_recaptcha_with_buster(driver)
+        time.sleep(2)
+        
         log("Submitting form...")
         click_submit_button(driver)
         time.sleep(8)
@@ -397,14 +429,9 @@ def run_bot():
             driver.save_screenshot("screenshot_03_submitted.png")
         
         if check_for_captcha(driver):
-            log("CAPTCHA detected!")
-            if click_audio_button(driver):
-                log("Waiting for Buster (30s)...")
-                time.sleep(30)
-                if not check_for_captcha(driver):
-                    log("CAPTCHA solved!")
-                else:
-                    log("CAPTCHA still present")
+            log("CAPTCHA detected after submit!")
+            solve_recaptcha_with_buster(driver)
+            time.sleep(5)
             if is_github:
                 driver.save_screenshot("screenshot_04_captcha.png")
         
@@ -413,7 +440,7 @@ def run_bot():
         for i in range(3):
             if click_submit_button(driver, final=True):
                 break
-            time.sleep(2)
+            time.sleep(3)
         
         time.sleep(10)
         if is_github:
