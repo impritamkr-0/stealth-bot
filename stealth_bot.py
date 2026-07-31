@@ -4,7 +4,7 @@ import time
 import random
 import string
 import tempfile
-import subprocess
+import re
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -15,18 +15,6 @@ TARGET_URL = "https://eurodns.pxf.io/PzkDy6"
 
 def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
-
-def get_chrome_major_version():
-    """Detects installed major Google Chrome version on Linux/Ubuntu runners."""
-    try:
-        output = subprocess.check_output(['google-chrome', '--version'], text=True)
-        version_str = output.strip().split()[-1]
-        major = int(version_str.split('.')[0])
-        log(f"Detected Google Chrome Major Version: {major}")
-        return major
-    except Exception as e:
-        log(f"Version detection failed: {e}")
-        return None
 
 def generate_random_email():
     domains = ["1secmail.com", "1secmail.net", "1secmail.org"]
@@ -243,18 +231,26 @@ def launch_driver():
         options.add_argument(f"--load-extension={','.join(extensions_to_load)}")
     
     log("Launching undetected-chromedriver in headed mode (via Xvfb)...")
-    major_ver = get_chrome_major_version()
+    
     try:
-        if major_ver:
-            return uc.Chrome(options=options, version_main=major_ver)
+        # 1. First try launching normally without pinning a major version
         return uc.Chrome(options=options)
     except Exception as e:
-        log(f"Launch error with explicit version: {e}. Retrying default launch...")
-        try:
-            return uc.Chrome(options=options)
-        except Exception as e2:
-            log(f"Fallback launch failed: {e2}")
-            return None
+        err_msg = str(e)
+        log(f"Default launch failed: {err_msg}")
+        
+        # 2. If ChromeDriver version mismatch occurs, extract the browser version from the error message!
+        # Example message: "Current browser version is 150.0.7871.0"
+        match = re.search(r"Current browser version is (\d+)", err_msg)
+        if match:
+            major_ver = int(match.group(1))
+            log(f"Detected mismatch! Forcing version_main={major_ver} to match browser...")
+            try:
+                return uc.Chrome(options=options, version_main=major_ver)
+            except Exception as e2:
+                log(f"Retry with version_main={major_ver} failed: {e2}")
+                return None
+        return None
 
 def run_bot():
     log("=" * 60)
