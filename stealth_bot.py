@@ -14,7 +14,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium_stealth import stealth
 
 TARGET_URL = "https://eurodns.pxf.io/PzkDy6"
-CAPTCHAAI_API_KEY = "d1xra8l7vlihswaqvaa6bo5z51zarchc"
+CAPTCHASOLV_API_KEY = "b7d9b78d-2970-418c-9fb5-4302652b58ed"
 
 def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
@@ -72,7 +72,7 @@ def smart_fill_field(driver, element, text):
     except:
         return False
 
-def solve_captcha_with_captchaai(driver, api_key):
+def solve_captcha_with_captchasolv(driver, api_key):
     log("Looking for reCAPTCHA sitekey on the page...")
     sitekey = None
     iframes = driver.find_elements(By.TAG_NAME, "iframe")
@@ -89,37 +89,57 @@ def solve_captcha_with_captchaai(driver, api_key):
         return False
         
     page_url = driver.current_url
-    log(f"Found sitekey: {sitekey}. Submitting to CaptchaAI API...")
+    log(f"Found sitekey: {sitekey}. Submitting to CaptchaSolv API...")
     
-    url = f"https://ocr.captchaai.com/in.php?key={api_key}&method=userrecaptcha&googlekey={sitekey}&pageurl={page_url}"
+    # 1. Create the Task
+    url_create = "https://v1.captchasolv.com/createTask"
+    payload_create = {
+        "clientKey": api_key,
+        "task": {
+            "type": "RecaptchaV2TaskProxyless",
+            "websiteURL": page_url,
+            "websiteKey": sitekey
+        }
+    }
+    
     try:
-        resp = requests.get(url, timeout=10).text
-        if not resp.startswith("OK|"):
-            log(f"CaptchaAI Error (in.php): {resp}")
+        resp = requests.post(url_create, json=payload_create, timeout=15).json()
+        if resp.get("errorId") != 0:
+            log(f"CaptchaSolv Error (createTask): {resp}")
             return False
             
-        task_id = resp.split("|")[1]
-        log(f"CaptchaAI Task ID: {task_id}. Waiting for background solution...")
+        task_id = resp.get("taskId")
+        log(f"CaptchaSolv Task ID: {task_id}. Waiting for background solution...")
+        
+        # 2. Poll for the Result
+        url_result = "https://v1.captchasolv.com/getTaskResult"
+        payload_result = {
+            "clientKey": api_key,
+            "taskId": task_id
+        }
         
         token = None
-        for _ in range(24): # Wait up to 2 minutes
+        for _ in range(30): # Wait up to 2.5 minutes
             time.sleep(5)
-            res_url = f"https://ocr.captchaai.com/res.php?key={api_key}&action=get&id={task_id}"
-            res_resp = requests.get(res_url, timeout=10).text
-            if res_resp.startswith("OK|"):
-                token = res_resp.split("|")[1]
+            res = requests.post(url_result, json=payload_result, timeout=10).json()
+            status = res.get("status")
+            
+            if status == "ready":
+                solution = res.get("solution", {})
+                # Extract the token (usually gRecaptchaResponse or token)
+                token = solution.get("gRecaptchaResponse") or solution.get("token")
                 break
-            elif res_resp != "CAPCHA_NOT_READY":
-                log(f"CaptchaAI Error (res.php): {res_resp}")
+            elif res.get("errorId") != 0:
+                log(f"CaptchaSolv Task Error (getTaskResult): {res}")
                 return False
                 
         if not token:
-            log("CaptchaAI timed out waiting for a solution.")
+            log("CaptchaSolv timed out waiting for a solution.")
             return False
             
         log("Solution received! Injecting token directly into page...")
         
-        # 1. Inject token into the hidden HTML textarea
+        # 3. Inject token into the hidden HTML textarea
         driver.execute_script(f"""
             var token = "{token}";
             var elems = document.getElementsByName('g-recaptcha-response');
@@ -129,7 +149,7 @@ def solve_captcha_with_captchaai(driver, api_key):
             }}
         """)
         
-        # 2. Force the page's JavaScript to accept the token
+        # 4. Force the page's JavaScript to accept the token via callbacks
         triggered = driver.execute_script(f"""
             var token = "{token}";
             var clients = window.___grecaptcha_cfg && window.___grecaptcha_cfg.clients;
@@ -155,7 +175,7 @@ def solve_captcha_with_captchaai(driver, api_key):
         return True
         
     except Exception as e:
-        log(f"Error communicating with CaptchaAI: {e}")
+        log(f"Error communicating with CaptchaSolv API: {e}")
         return False
 
 def create_proxy_auth_extension(proxy_str):
@@ -201,17 +221,15 @@ def build_chrome_options():
     options.add_argument("--disable-notifications")
     options.add_argument("--disable-blink-features=AutomationControlled")
     
-    extensions_to_load = []
     if proxy:
         proxy_ext_dir = create_proxy_auth_extension(proxy)
         if proxy_ext_dir:
-            extensions_to_load.append(proxy_ext_dir)
+            options.add_argument(f"--load-extension={proxy_ext_dir}")
         else:
             clean_proxy = proxy.replace("http://", "").replace("https://", "").strip()
-            if clean_proxy.count(":") == 1: options.add_argument(f'--proxy-server=http://{clean_proxy}')
+            if clean_proxy.count(":") == 1: 
+                options.add_argument(f'--proxy-server=http://{clean_proxy}')
 
-    if extensions_to_load:
-        options.add_argument(f"--load-extension={','.join(extensions_to_load)}")
     return options
 
 def launch_driver():
@@ -330,9 +348,9 @@ def run_bot():
         time.sleep(4)
         if is_github: driver.save_screenshot("screenshot_03_submitted.png")
 
-        # Automatically resolve the CAPTCHA via API without clicking images
-        log("Initializing API-based CaptchaAI solver...")
-        solve_captcha_with_captchaai(driver, CAPTCHAAI_API_KEY)
+        # Automatically resolve the CAPTCHA via CaptchaSolv API
+        log("Initializing API-based CaptchaSolv solver...")
+        solve_captcha_with_captchasolv(driver, CAPTCHASOLV_API_KEY)
         
         # After injecting the token, we click the Create Account button one more time 
         # to submit the fully verified form to their server.
