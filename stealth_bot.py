@@ -91,7 +91,7 @@ def solve_captcha_with_captchaai(driver, api_key):
     page_url = driver.current_url
     log(f"Found sitekey: {sitekey}. Submitting to CaptchaAI API...")
     
-    url = f"https://api.captchaai.com/in.php?key={api_key}&method=userrecaptcha&googlekey={sitekey}&pageurl={page_url}"
+    url = f"https://ocr.captchaai.com/in.php?key={api_key}&method=userrecaptcha&googlekey={sitekey}&pageurl={page_url}"
     try:
         resp = requests.get(url, timeout=10).text
         if not resp.startswith("OK|"):
@@ -104,7 +104,7 @@ def solve_captcha_with_captchaai(driver, api_key):
         token = None
         for _ in range(24): # Wait up to 2 minutes
             time.sleep(5)
-            res_url = f"https://api.captchaai.com/res.php?key={api_key}&action=get&id={task_id}"
+            res_url = f"https://ocr.captchaai.com/res.php?key={api_key}&action=get&id={task_id}"
             res_resp = requests.get(res_url, timeout=10).text
             if res_resp.startswith("OK|"):
                 token = res_resp.split("|")[1]
