@@ -26,26 +26,6 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq google-chrome-stable xvfb xserver-xephyr
 
-      - name: Download & Unpack Buster Extension
-        run: |
-          echo "Downloading Buster extension via Python..."
-          sudo mkdir -p /opt/buster
-          python3 -c "
-          import urllib.request, zipfile, os
-          # Buster Extension ID: mpbjkejclgoceaajmgiaoecpdmlomohb
-          url = 'https://clients2.google.com/service/update2/crx?response=redirect&prodversion=130.0&acceptformat=crx2,crx3&x=id%3Dmpbjkejclgoceaajmgiaoecpdmlomohb%26uc'
-          try:
-              req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-              with urllib.request.urlopen(req, timeout=30) as resp, open('/tmp/buster.zip', 'wb') as f:
-                  f.write(resp.read())
-              with zipfile.ZipFile('/tmp/buster.zip', 'r') as z:
-                  z.extractall('/opt/buster')
-              print('Buster downloaded and unpacked successfully!')
-          except Exception as e:
-              print('Error downloading Buster:', e)
-          "
-          ls -la /opt/buster/
-
       - name: Install Python Dependencies
         run: |
           pip install -q --upgrade pip
@@ -54,7 +34,6 @@ jobs:
       - name: Run Bot with Virtual Display
         env:
           GITHUB_ACTIONS: "true"
-          BUSTER_PATH: "/opt/buster"
           PYTHONUNBUFFERED: "1"
           PROXY_URL: ${{ secrets.PROXY_URL }}
         run: |
