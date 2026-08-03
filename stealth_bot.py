@@ -71,7 +71,7 @@ def smart_fill_field(driver, element, text):
     except:
         return False
 
-def solve_captcha_with_free_nopecha(driver, max_wait=45):
+def solve_captcha_with_free_nopecha(driver, max_wait=60):
     log("Checking for CAPTCHA image challenge popup...")
     start_time = time.time()
     
@@ -94,9 +94,10 @@ def solve_captcha_with_free_nopecha(driver, max_wait=45):
             driver.switch_to.frame(challenge_frame)
             time.sleep(2)
 
+            # 1. Trigger NopeCHA solver
             try:
                 nopecha_btn = WebDriverWait(driver, 5).until(
-                    EC.element_to_be_clickable((By.ID, "solver-button"))
+                    EC.presence_of_element_located((By.ID, "solver-button"))
                 )
                 driver.execute_script("arguments[0].click();", nopecha_btn)
                 log("Clicked NopeCHA visual solver button!")
@@ -107,9 +108,26 @@ def solve_captcha_with_free_nopecha(driver, max_wait=45):
                 except:
                     pass
 
+            # 2. Monitor and Force Click "Verify" / "Next"
+            log("Monitoring images and assisting with Verify button...")
+            for _ in range(15):  # Loop inside the frame waiting for Verify
+                time.sleep(2)
+                try:
+                    # Your exact Verify button XPath
+                    verify_btn = driver.find_element(By.XPATH, '//*[@id="recaptcha-verify-button"]')
+                    # Check if the button is active (not disabled)
+                    btn_class = verify_btn.get_attribute("class") or ""
+                    if verify_btn.is_displayed() and "rc-button-default-disabled" not in btn_class:
+                        driver.execute_script("arguments[0].click();", verify_btn)
+                        log("Force-clicked the Verify/Next button!")
+                        time.sleep(2)
+                except:
+                    pass
+
             driver.switch_to.default_content()
             
-            for _ in range(15):
+            # 3. Check if challenge closed
+            for _ in range(3):
                 time.sleep(2)
                 visible_challenges = [
                     f for f in driver.find_elements(By.TAG_NAME, "iframe")
@@ -310,7 +328,7 @@ def run_bot():
 
         # 8. Solve CAPTCHA
         log("Waiting for and solving pop-up CAPTCHA challenge...")
-        solve_captcha_with_free_nopecha(driver, max_wait=45)
+        solve_captcha_with_free_nopecha(driver, max_wait=60)
         
         time.sleep(8)
         if is_github: driver.save_screenshot("screenshot_04_final.png")
