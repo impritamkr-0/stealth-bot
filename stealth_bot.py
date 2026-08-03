@@ -14,7 +14,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium_stealth import stealth
 
 TARGET_URL = "https://eurodns.pxf.io/PzkDy6"
-CAPTCHASOLV_API_KEY = "cs_Ns8derLclhnxroY4V5w7nStV8g5UHdI3"
+CAPTCHASOLV_API_KEY = "cs_c6rSqJ4MiF6IFECCchXEDVHL3O7EeJBu"
 
 def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
