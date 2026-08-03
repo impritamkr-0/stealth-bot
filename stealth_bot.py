@@ -13,6 +13,8 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium_stealth import stealth
 
 TARGET_URL = "https://eurodns.pxf.io/PzkDy6"
+# The official Chrome Web Store ID for NopeCHA
+NOPECHA_EXT_ID = "dknlfmjaanfblgfdfebhijalfmhmjjjo"
 
 def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
@@ -55,7 +57,6 @@ def fast_human_type(element, text):
     element.clear()
     for char in text:
         element.send_keys(char)
-        # Faster typing speed
         time.sleep(random.uniform(0.01, 0.05))
 
 def smart_fill_field(driver, element, text):
@@ -96,51 +97,32 @@ def solve_captcha_with_free_nopecha(driver, max_wait=60):
 
             # 1. Trigger NopeCHA solver
             try:
-                nopecha_btn = WebDriverWait(driver, 5).until(
-                    EC.presence_of_element_located((By.ID, "solver-button"))
+                # NopeCHA dynamically injects a button with these classes
+                nopecha_btn = WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located((By.XPATH, "//*[contains(@class, 'nopecha') or contains(@id, 'nopecha')]"))
                 )
                 driver.execute_script("arguments[0].click();", nopecha_btn)
-                log("Clicked NopeCHA visual solver button!")
-            except:
-                try:
-                    alt_btn = driver.find_element(By.XPATH, "//*[contains(@class, 'nopecha') or contains(@title, 'Solve')]")
-                    driver.execute_script("arguments[0].click();", alt_btn)
-                except:
-                    pass
-
-            # 2. Monitor and Force Click "Verify" / "Next"
-            log("Monitoring images and assisting with Verify button...")
-            for _ in range(15):  # Loop inside the frame waiting for Verify
-                time.sleep(2)
-                try:
-                    # Your exact Verify button XPath
-                    verify_btn = driver.find_element(By.XPATH, '//*[@id="recaptcha-verify-button"]')
-                    # Check if the button is active (not disabled)
-                    btn_class = verify_btn.get_attribute("class") or ""
-                    if verify_btn.is_displayed() and "rc-button-default-disabled" not in btn_class:
-                        driver.execute_script("arguments[0].click();", verify_btn)
-                        log("Force-clicked the Verify/Next button!")
-                        time.sleep(2)
-                except:
-                    pass
+                log("Clicked NopeCHA visual solver button! Waiting for AI to finish...")
+            except Exception as e:
+                log("Could not find NopeCHA button. It may be solving automatically.")
 
             driver.switch_to.default_content()
             
-            # 3. Check if challenge closed
-            for _ in range(3):
+            # 2. Sit patiently and wait for the AI to solve it (NO SPAM CLICKING)
+            for _ in range(30):
                 time.sleep(2)
                 visible_challenges = [
                     f for f in driver.find_elements(By.TAG_NAME, "iframe")
                     if "bframe" in (f.get_attribute("src") or "") and f.is_displayed()
                 ]
                 if not visible_challenges:
-                    log("CAPTCHA cleared successfully!")
+                    log("CAPTCHA cleared successfully by NopeCHA!")
                     return True
         except:
             driver.switch_to.default_content()
             time.sleep(2)
             
-    log("CAPTCHA challenge wait completed.")
+    log("CAPTCHA challenge wait completed/timed out.")
     return False
 
 def create_proxy_auth_extension(proxy_str):
@@ -244,6 +226,15 @@ def run_bot():
     driver.implicitly_wait(5)
     
     try:
+        # WAKE UP AND ACTIVATE NOPECHA EXTENSION
+        log("Activating NopeCHA Extension settings...")
+        try:
+            driver.get(f"chrome-extension://{NOPECHA_EXT_ID}/setup.html")
+            time.sleep(3)
+            log("NopeCHA successfully initialized and permitted.")
+        except Exception as e:
+            log("Could not load NopeCHA settings. It may not be loaded properly.")
+
         # 1. Open URL & Handle Cloudflare
         log(f"Loading affiliate link: {TARGET_URL}")
         driver.get(TARGET_URL)
