@@ -74,6 +74,7 @@ def smart_fill_field(driver, element, text):
 def solve_captcha_with_free_nopecha(driver, max_wait=60):
     log("Checking for CAPTCHA image challenge popup...")
     start_time = time.time()
+    is_github = os.environ.get('GITHUB_ACTIONS') == 'true'
     
     while time.time() - start_time < max_wait:
         try:
@@ -90,22 +91,40 @@ def solve_captcha_with_free_nopecha(driver, max_wait=60):
                 time.sleep(2)
                 continue
 
-            log("Challenge popup detected! Switching to frame...")
+            log("Challenge popup detected!")
+            
+            # Save screenshot right when popup appears to debug if NopeCHA is visible
+            if is_github:
+                driver.save_screenshot("screenshot_captcha_popup_debug.png")
+
             driver.switch_to.frame(challenge_frame)
             time.sleep(2)
 
-            # 1. Look for and click the NopeCHA solver button if it injected correctly
+            # Look for NopeCHA inside the iframe
+            clicked = False
             try:
                 nopecha_btn = driver.find_element(By.XPATH, "//*[contains(@class, 'nopecha') or contains(@id, 'nopecha')]")
                 driver.execute_script("arguments[0].click();", nopecha_btn)
-                log("Clicked NopeCHA visual solver button!")
+                log("Clicked NopeCHA visual solver button inside iframe!")
+                clicked = True
             except:
                 pass
 
+            # If not inside, look for NopeCHA outside the iframe
+            if not clicked:
+                driver.switch_to.default_content()
+                try:
+                    nopecha_btn = driver.find_element(By.XPATH, "//*[contains(@class, 'nopecha') or contains(@id, 'nopecha')]")
+                    driver.execute_script("arguments[0].click();", nopecha_btn)
+                    log("Clicked NopeCHA visual solver button in main document!")
+                    clicked = True
+                except:
+                    log("WARNING: Could not find NopeCHA button! Extension may be blocked or requires login.")
+                driver.switch_to.frame(challenge_frame)
+
             driver.switch_to.default_content()
             
-            # 2. Wait patiently for NopeCHA AI to select the images and click Verify itself. No spam clicking!
-            log("Waiting patiently for NopeCHA AI to select images and verify...")
+            log("Waiting patiently for CAPTCHA to be cleared...")
             for _ in range(25):
                 time.sleep(2)
                 visible_challenges = [
@@ -113,7 +132,7 @@ def solve_captcha_with_free_nopecha(driver, max_wait=60):
                     if "bframe" in (f.get_attribute("src") or "") and f.is_displayed()
                 ]
                 if not visible_challenges:
-                    log("CAPTCHA cleared successfully by NopeCHA!")
+                    log("CAPTCHA cleared successfully!")
                     return True
         except:
             driver.switch_to.default_content()
@@ -223,13 +242,11 @@ def run_bot():
     driver.implicitly_wait(5)
     
     try:
-        # WAKE UP AND ACTIVATE NOPECHA EXTENSION (Simulating Icon Click)
+        # WAKE UP AND ACTIVATE NOPECHA EXTENSION
         log("Activating NopeCHA Extension (Simulating toolbar icon click)...")
         try:
-            # Open the popup HTML to trigger the background AI script
             driver.get(f"chrome-extension://{NOPECHA_EXT_ID}/popup.html")
             time.sleep(2)
-            # Visit NopeCHA setup page to register free token
             driver.get("https://nopecha.com/setup")
             time.sleep(3)
             log("NopeCHA successfully initialized and activated.")
