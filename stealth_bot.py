@@ -12,7 +12,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium_stealth import stealth
 
-TARGET_URL = "url?id=35"
+TARGET_URL = "TARGET_URL = "https://eurodns.pxf.io/PzkDy6""
 NOPECHA_EXT_ID = "dknlfmjaanfblgfdfebhijalfmhmjjjo"
 
 def log(msg):
