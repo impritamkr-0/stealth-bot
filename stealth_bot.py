@@ -13,7 +13,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium_stealth import stealth
 
-TARGET_URL = "https://eurodns.pxf.io/PzkDy6"
+TARGET_URL = "https://github.com/impritamkr-0/stealth-bot2"
 CAPTCHASOLV_API_KEY = "b7d9b78d-2970-418c-9fb5-4302652b58ed"
 
 def log(msg):
@@ -91,7 +91,8 @@ def solve_captcha_with_captchasolv(driver, api_key):
     page_url = driver.current_url
     log(f"Found sitekey: {sitekey}. Submitting to CaptchaSolv API...")
     
-    url_solve = "https://v1.captchasolv.com/solve"
+    url_create = "https://v1.captchasolv.com/createTask"
+    url_result = "https://v1.captchasolv.com/getTaskResult"
     
     headers = {
         "Content-Type": "application/json",
@@ -99,14 +100,13 @@ def solve_captcha_with_captchasolv(driver, api_key):
     }
     
     token = None
-    max_retries = 5
+    max_retries = 3
     
     for attempt in range(1, max_retries + 1):
         log(f"--- CaptchaSolv Attempt {attempt}/{max_retries} ---")
-        payload = {
+        payload_create = {
             "clientKey": api_key,
             "task": {
-                # CHANGED to Invisible Task Type
                 "type": "RecaptchaV2InvisibleTaskProxyless",
                 "websiteURL": page_url,
                 "websiteKey": sitekey
@@ -114,33 +114,50 @@ def solve_captcha_with_captchasolv(driver, api_key):
         }
         
         try:
-            log("Waiting for background solution (this may take up to 2 minutes)...")
-            resp = requests.post(url_solve, json=payload, headers=headers, timeout=130)
+            # 1. Create the task (Async)
+            resp = requests.post(url_create, json=payload_create, headers=headers, timeout=15).json()
+            if resp.get("errorId") != 0:
+                log(f"CaptchaSolv Error (createTask): {resp}")
+                time.sleep(3)
+                continue
+                
+            task_id = resp.get("taskId")
+            log(f"CaptchaSolv Task ID: {task_id}. Waiting for background solution...")
             
-            try:
-                resp_json = resp.json()
-            except Exception as json_err:
-                log(f"API Error: CaptchaSolv returned a blank/HTML page instead of JSON data.")
-                log(f"HTTP Status Code: {resp.status_code}")
-                log(f"Raw Server Response: {resp.text[:200]}")
+            payload_result = {
+                "clientKey": api_key,
+                "taskId": task_id
+            }
+            
+            solved = False
+            # 2. Poll for the result
+            for _ in range(40): # Poll for up to ~3 minutes
                 time.sleep(5)
-                continue
-                
-            if resp_json.get("errorId") == 0:
-                token = resp_json.get("solution", {}).get("token")
-                log("Solution received successfully!")
+                try:
+                    res = requests.post(url_result, json=payload_result, headers=headers, timeout=15).json()
+                    status = res.get("status")
+                    
+                    if status == "ready":
+                        token = res.get("solution", {}).get("token")
+                        solved = True
+                        log("Solution received successfully!")
+                        break
+                    elif status == "processing":
+                        continue
+                    elif res.get("errorId") != 0:
+                        log(f"CaptchaSolv Task Error (getTaskResult): {res}")
+                        break
+                        
+                except Exception as poll_e:
+                    log(f"Polling network timeout, waiting and checking again... ({poll_e})")
+                    continue
+                    
+            if solved and token:
                 break
-            else:
-                log(f"CaptchaSolv Worker Error: {resp_json}")
-                time.sleep(5)
-                continue
                 
-        except requests.exceptions.ReadTimeout:
-            log("CaptchaSolv API connection timed out. Their servers took too long to respond.")
-            time.sleep(5)
         except Exception as e:
-            log(f"Network error communicating with CaptchaSolv API: {e}")
-            time.sleep(5)
+            log(f"Network error communicating with CaptchaSolv API on creation: {e}")
+            time.sleep(3)
 
     if not token:
         log("CaptchaSolv failed to solve the captcha after maximum retries.")
