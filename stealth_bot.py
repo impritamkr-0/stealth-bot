@@ -109,7 +109,8 @@ def solve_captcha_with_captchasolv(driver, api_key):
         }
         
         try:
-            resp = requests.post(url_create, json=payload_create, timeout=15).json()
+            # Create the task
+            resp = requests.post(url_create, json=payload_create, timeout=20).json()
             if resp.get("errorId") != 0:
                 log(f"CaptchaSolv Error (createTask): {resp}")
                 time.sleep(3)
@@ -126,23 +127,30 @@ def solve_captcha_with_captchasolv(driver, api_key):
             solved = False
             for _ in range(30): # Wait up to 2.5 minutes per attempt
                 time.sleep(5)
-                res = requests.post(url_result, json=payload_result, timeout=10).json()
-                status = res.get("status")
                 
-                if status == "ready":
-                    solution = res.get("solution", {})
-                    token = solution.get("gRecaptchaResponse") or solution.get("token")
-                    solved = True
-                    break
-                elif res.get("errorId") != 0:
-                    log(f"CaptchaSolv Task Error (getTaskResult): {res}")
-                    break # Break inner loop, let it retry
+                # Check for the result with an internal try-except so network timeouts don't kill the attempt
+                try:
+                    res = requests.post(url_result, json=payload_result, timeout=20).json()
+                    status = res.get("status")
+                    
+                    if status == "ready":
+                        solution = res.get("solution", {})
+                        token = solution.get("gRecaptchaResponse") or solution.get("token")
+                        solved = True
+                        break
+                    elif res.get("errorId") != 0:
+                        log(f"CaptchaSolv Task Error (getTaskResult): {res}")
+                        break # Break inner loop, let the outer loop create a new task
+                        
+                except Exception as poll_e:
+                    log(f"Polling network timeout, waiting and checking again... ({poll_e})")
+                    continue
                     
             if solved and token:
                 break # We got the token, break the retry loop!
                 
         except Exception as e:
-            log(f"Network error communicating with CaptchaSolv API: {e}")
+            log(f"Network error communicating with CaptchaSolv API on creation: {e}")
             time.sleep(3)
 
     if not token:
