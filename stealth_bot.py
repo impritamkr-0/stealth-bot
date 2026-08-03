@@ -166,8 +166,6 @@ def solve_captcha_with_captchasolv(driver, api_key):
     try:
         driver.execute_script(f"""
             var token = "{token}";
-            
-            // 1. Fill standard HTML forms
             var elems = document.getElementsByName('g-recaptcha-response');
             for (var i = 0; i < elems.length; i++) {{
                 elems[i].innerHTML = token;
@@ -176,14 +174,12 @@ def solve_captcha_with_captchasolv(driver, api_key):
                 elems[i].dispatchEvent(new Event('change', {{ bubbles: true }}));
             }}
             
-            // 2. Hijack grecaptcha object (Crucial for modern frameworks)
             window.grecaptcha = window.grecaptcha || {{}};
             window.grecaptcha.getResponse = function() {{ return token; }};
             if (window.grecaptcha.enterprise) {{
                 window.grecaptcha.enterprise.getResponse = function() {{ return token; }};
             }}
             
-            // 3. Try to trigger callbacks directly
             var clients = window.___grecaptcha_cfg && window.___grecaptcha_cfg.clients;
             if (clients) {{
                 for (var cid in clients) {{
@@ -358,7 +354,6 @@ def run_bot():
 
         if is_github: driver.save_screenshot("screenshot_02_filled.png")
 
-        # REVERTED: Using the exact absolute XPath that worked previously
         submit_xpath = '/html/body/edns-root/edns-layout/div/div/edns-side-panels/mat-sidenav-container/mat-sidenav-content/div/div[2]/edns-new-account/div/div/form/div[4]/button'
         
         log("Clicking exact Create Account button...")
@@ -374,16 +369,19 @@ def run_bot():
         time.sleep(4)
         if is_github: driver.save_screenshot("screenshot_03_submitted.png")
 
-        # Automatically resolve the CAPTCHA via CaptchaSolv API
+        # Solve CAPTCHA via API
         log("Initializing API-based CaptchaSolv solver...")
         solve_captcha_with_captchasolv(driver, CAPTCHASOLV_API_KEY)
         
-        log("Clicking Create Account button again to submit the verified form...")
+        log("Waiting 3 seconds for token processing, then clicking submit again...")
+        time.sleep(3)
+        
         try:
             submit_btn = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, submit_xpath)))
             driver.execute_script("arguments[0].click();", submit_btn)
-        except:
-            pass
+            log("Final form submission clicked.")
+        except Exception as e:
+            log(f"Could not click submit second time: {e}")
 
         time.sleep(8)
         if is_github: driver.save_screenshot("screenshot_04_final.png")
@@ -392,7 +390,7 @@ def run_bot():
         success = "createNewAccount" not in url
         
         log("=" * 60)
-        log("SUCCESS! Account created!" if success else "FAILED - URL did not change.")
+        log("SUCCESS! Account created!" if success else "FAILED - Account creation did not finalize.")
         log(f"Final URL: {url}")
         log("=" * 60)
         
