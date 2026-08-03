@@ -91,54 +91,67 @@ def solve_captcha_with_captchasolv(driver, api_key):
     page_url = driver.current_url
     log(f"Found sitekey: {sitekey}. Submitting to CaptchaSolv API...")
     
-    # 1. Create the Task
     url_create = "https://v1.captchasolv.com/createTask"
-    payload_create = {
-        "clientKey": api_key,
-        "task": {
-            "type": "RecaptchaV2TaskProxyless",
-            "websiteURL": page_url,
-            "websiteKey": sitekey
+    url_result = "https://v1.captchasolv.com/getTaskResult"
+    
+    token = None
+    max_retries = 3
+    
+    for attempt in range(1, max_retries + 1):
+        log(f"--- CaptchaSolv Attempt {attempt}/{max_retries} ---")
+        payload_create = {
+            "clientKey": api_key,
+            "task": {
+                "type": "RecaptchaV2TaskProxyless",
+                "websiteURL": page_url,
+                "websiteKey": sitekey
+            }
         }
-    }
+        
+        try:
+            resp = requests.post(url_create, json=payload_create, timeout=15).json()
+            if resp.get("errorId") != 0:
+                log(f"CaptchaSolv Error (createTask): {resp}")
+                time.sleep(3)
+                continue
+                
+            task_id = resp.get("taskId")
+            log(f"CaptchaSolv Task ID: {task_id}. Waiting for background solution...")
+            
+            payload_result = {
+                "clientKey": api_key,
+                "taskId": task_id
+            }
+            
+            solved = False
+            for _ in range(30): # Wait up to 2.5 minutes per attempt
+                time.sleep(5)
+                res = requests.post(url_result, json=payload_result, timeout=10).json()
+                status = res.get("status")
+                
+                if status == "ready":
+                    solution = res.get("solution", {})
+                    token = solution.get("gRecaptchaResponse") or solution.get("token")
+                    solved = True
+                    break
+                elif res.get("errorId") != 0:
+                    log(f"CaptchaSolv Task Error (getTaskResult): {res}")
+                    break # Break inner loop, let it retry
+                    
+            if solved and token:
+                break # We got the token, break the retry loop!
+                
+        except Exception as e:
+            log(f"Network error communicating with CaptchaSolv API: {e}")
+            time.sleep(3)
+
+    if not token:
+        log("CaptchaSolv failed to solve the captcha after maximum retries.")
+        return False
+        
+    log("Solution received! Injecting token directly into page...")
     
     try:
-        resp = requests.post(url_create, json=payload_create, timeout=15).json()
-        if resp.get("errorId") != 0:
-            log(f"CaptchaSolv Error (createTask): {resp}")
-            return False
-            
-        task_id = resp.get("taskId")
-        log(f"CaptchaSolv Task ID: {task_id}. Waiting for background solution...")
-        
-        # 2. Poll for the Result
-        url_result = "https://v1.captchasolv.com/getTaskResult"
-        payload_result = {
-            "clientKey": api_key,
-            "taskId": task_id
-        }
-        
-        token = None
-        for _ in range(30): # Wait up to 2.5 minutes
-            time.sleep(5)
-            res = requests.post(url_result, json=payload_result, timeout=10).json()
-            status = res.get("status")
-            
-            if status == "ready":
-                solution = res.get("solution", {})
-                # Extract the token (usually gRecaptchaResponse or token)
-                token = solution.get("gRecaptchaResponse") or solution.get("token")
-                break
-            elif res.get("errorId") != 0:
-                log(f"CaptchaSolv Task Error (getTaskResult): {res}")
-                return False
-                
-        if not token:
-            log("CaptchaSolv timed out waiting for a solution.")
-            return False
-            
-        log("Solution received! Injecting token directly into page...")
-        
         # 3. Inject token into the hidden HTML textarea
         driver.execute_script(f"""
             var token = "{token}";
@@ -173,9 +186,8 @@ def solve_captcha_with_captchasolv(driver, api_key):
             log("Could not find standard callback. The form might need to be submitted again manually.")
             
         return True
-        
     except Exception as e:
-        log(f"Error communicating with CaptchaSolv API: {e}")
+        log(f"Failed to inject token into the page: {e}")
         return False
 
 def create_proxy_auth_extension(proxy_str):
@@ -366,7 +378,7 @@ def run_bot():
         
         url = driver.current_url
         page = driver.page_source.lower()
-        success = any(x in page for x in ["welcome", "success", "verification", "dashboard"]) or "create" not in url
+        success = any(x in page for x in ["welcome", "success", "verification", "dashboard"])
         
         log("=" * 60)
         log("SUCCESS!" if success else "UNCLEAR")
