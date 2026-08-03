@@ -6,6 +6,7 @@ import string
 import tempfile
 import subprocess
 import re
+import requests
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -13,7 +14,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium_stealth import stealth
 
 TARGET_URL = "https://eurodns.pxf.io/PzkDy6"
-BUSTER_EXT_ID = "mpbjkejclgoceaajmgiaoecpdmlomohb"
+CAPTCHAAI_API_KEY = "d1xra8l7vlihswaqvaa6bo5z51zarchc"
 
 def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
@@ -71,70 +72,91 @@ def smart_fill_field(driver, element, text):
     except:
         return False
 
-def solve_captcha_with_buster(driver, max_wait=60):
-    log("Checking for CAPTCHA challenge popup...")
-    start_time = time.time()
-    is_github = os.environ.get('GITHUB_ACTIONS') == 'true'
+def solve_captcha_with_captchaai(driver, api_key):
+    log("Looking for reCAPTCHA sitekey on the page...")
+    sitekey = None
+    iframes = driver.find_elements(By.TAG_NAME, "iframe")
+    for iframe in iframes:
+        src = iframe.get_attribute("src") or ""
+        if "k=" in src and "recaptcha" in src:
+            match = re.search(r"[?&]k=([^&]+)", src)
+            if match:
+                sitekey = match.group(1)
+                break
+                
+    if not sitekey:
+        log("No CAPTCHA sitekey found. (Maybe it didn't load?)")
+        return False
+        
+    page_url = driver.current_url
+    log(f"Found sitekey: {sitekey}. Submitting to CaptchaAI API...")
     
-    while time.time() - start_time < max_wait:
-        try:
-            iframes = driver.find_elements(By.TAG_NAME, "iframe")
-            challenge_frame = None
-            for iframe in iframes:
-                src = iframe.get_attribute("src") or ""
-                if "recaptcha" in src and ("bframe" in src or "challenge" in src):
-                    if iframe.is_displayed():
-                        challenge_frame = iframe
-                        break
+    url = f"https://api.captchaai.com/in.php?key={api_key}&method=userrecaptcha&googlekey={sitekey}&pageurl={page_url}"
+    try:
+        resp = requests.get(url, timeout=10).text
+        if not resp.startswith("OK|"):
+            log(f"CaptchaAI Error (in.php): {resp}")
+            return False
             
-            if not challenge_frame:
-                time.sleep(2)
-                continue
-
-            log("Challenge popup detected! Switching to frame...")
-            driver.switch_to.frame(challenge_frame)
-            time.sleep(2)
-
-            if is_github:
-                driver.save_screenshot("screenshot_captcha_popup.png")
-
-            # 1. Click the 'Audio Challenge' headphones icon (this makes Buster active)
-            try:
-                audio_btn = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.ID, "recaptcha-audio-button")))
-                driver.execute_script("arguments[0].click();", audio_btn)
-                log("Clicked Audio Challenge button.")
-                time.sleep(2)
-            except Exception as e:
-                log("Could not find Audio Challenge button. It might already be in audio mode.")
-
-            # 2. Click Buster's specific solver button (usually a person icon with title "Solve with Buster")
-            try:
-                buster_btn = WebDriverWait(driver, 5).until(
-                    EC.presence_of_element_located((By.XPATH, "//*[@title='Solve with Buster' or contains(@class, 'help-button-holder') or @id='solver-button']"))
-                )
-                driver.execute_script("arguments[0].click();", buster_btn)
-                log("Clicked Buster Solver button! Waiting for AI to transcribe audio...")
-            except Exception as e:
-                log("Could not find Buster button!")
-
-            driver.switch_to.default_content()
+        task_id = resp.split("|")[1]
+        log(f"CaptchaAI Task ID: {task_id}. Waiting for background solution...")
+        
+        token = None
+        for _ in range(24): # Wait up to 2 minutes
+            time.sleep(5)
+            res_url = f"https://api.captchaai.com/res.php?key={api_key}&action=get&id={task_id}"
+            res_resp = requests.get(res_url, timeout=10).text
+            if res_resp.startswith("OK|"):
+                token = res_resp.split("|")[1]
+                break
+            elif res_resp != "CAPCHA_NOT_READY":
+                log(f"CaptchaAI Error (res.php): {res_resp}")
+                return False
+                
+        if not token:
+            log("CaptchaAI timed out waiting for a solution.")
+            return False
             
-            # 3. Wait for Buster to solve it
-            for _ in range(25):
-                time.sleep(2)
-                visible_challenges = [
-                    f for f in driver.find_elements(By.TAG_NAME, "iframe")
-                    if "bframe" in (f.get_attribute("src") or "") and f.is_displayed()
-                ]
-                if not visible_challenges:
-                    log("CAPTCHA cleared successfully by Buster!")
-                    return True
-        except:
-            driver.switch_to.default_content()
-            time.sleep(2)
+        log("Solution received! Injecting token directly into page...")
+        
+        # 1. Inject token into the hidden HTML textarea
+        driver.execute_script(f"""
+            var token = "{token}";
+            var elems = document.getElementsByName('g-recaptcha-response');
+            for (var i = 0; i < elems.length; i++) {{
+                elems[i].innerHTML = token;
+                elems[i].value = token;
+            }}
+        """)
+        
+        # 2. Force the page's JavaScript to accept the token
+        triggered = driver.execute_script(f"""
+            var token = "{token}";
+            var clients = window.___grecaptcha_cfg && window.___grecaptcha_cfg.clients;
+            if (clients) {{
+                for (var cid in clients) {{
+                    var client = clients[cid];
+                    for (var key in client) {{
+                        if (client[key] && client[key].callback) {{
+                            client[key].callback(token);
+                            return true;
+                        }}
+                    }}
+                }}
+            }}
+            return false;
+        """)
+        
+        if triggered:
+            log("Successfully fired reCAPTCHA callback with the solved token!")
+        else:
+            log("Could not find standard callback. The form might need to be submitted again manually.")
             
-    log("CAPTCHA challenge wait completed/timed out.")
-    return False
+        return True
+        
+    except Exception as e:
+        log(f"Error communicating with CaptchaAI: {e}")
+        return False
 
 def create_proxy_auth_extension(proxy_str):
     try:
@@ -170,7 +192,6 @@ def create_proxy_auth_extension(proxy_str):
         return None
 
 def build_chrome_options():
-    buster_path = os.environ.get('BUSTER_PATH', '/opt/buster')
     proxy = os.environ.get('PROXY_URL')
     options = uc.ChromeOptions()
     options.add_argument("--no-sandbox")
@@ -188,9 +209,6 @@ def build_chrome_options():
         else:
             clean_proxy = proxy.replace("http://", "").replace("https://", "").strip()
             if clean_proxy.count(":") == 1: options.add_argument(f'--proxy-server=http://{clean_proxy}')
-            
-    if os.path.exists(buster_path) and os.path.exists(f"{buster_path}/manifest.json"):
-        extensions_to_load.append(buster_path)
 
     if extensions_to_load:
         options.add_argument(f"--load-extension={','.join(extensions_to_load)}")
@@ -237,14 +255,6 @@ def run_bot():
     driver.implicitly_wait(5)
     
     try:
-        log("Activating Buster Extension...")
-        try:
-            driver.get(f"chrome-extension://{BUSTER_EXT_ID}/options.html")
-            time.sleep(2)
-            log("Buster successfully initialized.")
-        except Exception as e:
-            log("Could not load Buster options. Proceeding anyway.")
-
         log(f"Loading affiliate link: {TARGET_URL}")
         driver.get(TARGET_URL)
         wait_for_cloudflare_clear(driver, max_wait=30)
@@ -313,16 +323,26 @@ def run_bot():
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", submit_btn)
             time.sleep(1)
             driver.execute_script("arguments[0].click();", submit_btn)
-            log("Submit button clicked!")
+            log("Submit button clicked! Captcha should pop up now.")
         except Exception as e:
             log(f"Failed to click exact Submit Button. Error: {e}")
 
         time.sleep(4)
         if is_github: driver.save_screenshot("screenshot_03_submitted.png")
 
-        # Solve CAPTCHA using BUSTER
-        solve_captcha_with_buster(driver, max_wait=60)
+        # Automatically resolve the CAPTCHA via API without clicking images
+        log("Initializing API-based CaptchaAI solver...")
+        solve_captcha_with_captchaai(driver, CAPTCHAAI_API_KEY)
         
+        # After injecting the token, we click the Create Account button one more time 
+        # to submit the fully verified form to their server.
+        log("Clicking Create Account button again to submit the verified form...")
+        try:
+            submit_btn = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, submit_xpath)))
+            driver.execute_script("arguments[0].click();", submit_btn)
+        except:
+            pass
+
         time.sleep(8)
         if is_github: driver.save_screenshot("screenshot_04_final.png")
         
