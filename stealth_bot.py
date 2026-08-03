@@ -166,38 +166,40 @@ def solve_captcha_with_captchasolv(driver, api_key):
     log("Injecting token directly into page...")
     
     try:
-        # 3. Inject token into the hidden HTML textarea
-        driver.execute_script(f"""
+        # 3. Inject token into the hidden HTML textarea AND trigger Angular change events
+        triggered = driver.execute_script(f"""
             var token = "{token}";
+            var foundCallback = false;
+            
             var elems = document.getElementsByName('g-recaptcha-response');
             for (var i = 0; i < elems.length; i++) {{
                 elems[i].innerHTML = token;
                 elems[i].value = token;
+                // Crucial for modern frameworks like Angular to detect the change
+                elems[i].dispatchEvent(new Event('input', {{ bubbles: true }}));
+                elems[i].dispatchEvent(new Event('change', {{ bubbles: true }}));
             }}
-        """)
-        
-        # 4. Force the page's JavaScript to accept the token via callbacks
-        triggered = driver.execute_script(f"""
-            var token = "{token}";
+            
+            // 4. Try standard callbacks if they exist
             var clients = window.___grecaptcha_cfg && window.___grecaptcha_cfg.clients;
             if (clients) {{
                 for (var cid in clients) {{
                     var client = clients[cid];
                     for (var key in client) {{
-                        if (client[key] && client[key].callback) {{
+                        if (client[key] && typeof client[key].callback === 'function') {{
                             client[key].callback(token);
-                            return true;
+                            foundCallback = true;
                         }}
                     }}
                 }}
             }}
-            return false;
+            return foundCallback;
         """)
         
         if triggered:
             log("Successfully fired reCAPTCHA callback with the solved token!")
         else:
-            log("Could not find standard callback. The form might need to be submitted again manually.")
+            log("Could not find standard JS callback. Relying on Angular event trigger & manual submission click.")
             
         return True
     except Exception as e:
