@@ -12,8 +12,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium_stealth import stealth
 
-TARGET_URL = "https://eurodns.pxf.io/PzkDy6"
-# The official Chrome Web Store ID for NopeCHA
+TARGET_URL = "url?id=35"
 NOPECHA_EXT_ID = "dknlfmjaanfblgfdfebhijalfmhmjjjo"
 
 def log(msg):
@@ -95,21 +94,19 @@ def solve_captcha_with_free_nopecha(driver, max_wait=60):
             driver.switch_to.frame(challenge_frame)
             time.sleep(2)
 
-            # 1. Trigger NopeCHA solver
+            # 1. Look for and click the NopeCHA solver button if it injected correctly
             try:
-                # NopeCHA dynamically injects a button with these classes
-                nopecha_btn = WebDriverWait(driver, 10).until(
-                    EC.presence_of_element_located((By.XPATH, "//*[contains(@class, 'nopecha') or contains(@id, 'nopecha')]"))
-                )
+                nopecha_btn = driver.find_element(By.XPATH, "//*[contains(@class, 'nopecha') or contains(@id, 'nopecha')]")
                 driver.execute_script("arguments[0].click();", nopecha_btn)
-                log("Clicked NopeCHA visual solver button! Waiting for AI to finish...")
-            except Exception as e:
-                log("Could not find NopeCHA button. It may be solving automatically.")
+                log("Clicked NopeCHA visual solver button!")
+            except:
+                pass
 
             driver.switch_to.default_content()
             
-            # 2. Sit patiently and wait for the AI to solve it (NO SPAM CLICKING)
-            for _ in range(30):
+            # 2. Wait patiently for NopeCHA AI to select the images and click Verify itself. No spam clicking!
+            log("Waiting patiently for NopeCHA AI to select images and verify...")
+            for _ in range(25):
                 time.sleep(2)
                 visible_challenges = [
                     f for f in driver.find_elements(By.TAG_NAME, "iframe")
@@ -226,14 +223,18 @@ def run_bot():
     driver.implicitly_wait(5)
     
     try:
-        # WAKE UP AND ACTIVATE NOPECHA EXTENSION
-        log("Activating NopeCHA Extension settings...")
+        # WAKE UP AND ACTIVATE NOPECHA EXTENSION (Simulating Icon Click)
+        log("Activating NopeCHA Extension (Simulating toolbar icon click)...")
         try:
-            driver.get(f"chrome-extension://{NOPECHA_EXT_ID}/setup.html")
+            # Open the popup HTML to trigger the background AI script
+            driver.get(f"chrome-extension://{NOPECHA_EXT_ID}/popup.html")
+            time.sleep(2)
+            # Visit NopeCHA setup page to register free token
+            driver.get("https://nopecha.com/setup")
             time.sleep(3)
-            log("NopeCHA successfully initialized and permitted.")
+            log("NopeCHA successfully initialized and activated.")
         except Exception as e:
-            log("Could not load NopeCHA settings. It may not be loaded properly.")
+            log("Could not load NopeCHA popup. Proceeding anyway.")
 
         # 1. Open URL & Handle Cloudflare
         log(f"Loading affiliate link: {TARGET_URL}")
