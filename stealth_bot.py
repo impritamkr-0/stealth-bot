@@ -114,7 +114,6 @@ def solve_captcha_with_captchasolv(driver, api_key):
         }
         
         try:
-            # 1. Create the task (Async)
             resp = requests.post(url_create, json=payload_create, headers=headers, timeout=15).json()
             if resp.get("errorId") != 0:
                 log(f"CaptchaSolv Error (createTask): {resp}")
@@ -130,8 +129,7 @@ def solve_captcha_with_captchasolv(driver, api_key):
             }
             
             solved = False
-            # 2. Poll for the result
-            for _ in range(40): # Poll for up to ~3 minutes
+            for _ in range(40): 
                 time.sleep(5)
                 try:
                     res = requests.post(url_result, json=payload_result, headers=headers, timeout=15).json()
@@ -163,44 +161,43 @@ def solve_captcha_with_captchasolv(driver, api_key):
         log("CaptchaSolv failed to solve the captcha after maximum retries.")
         return False
         
-    log("Injecting token directly into page...")
+    log("Injecting token directly into page and overriding Angular grecaptcha object...")
     
     try:
-        # 3. Inject token into the hidden HTML textarea AND trigger Angular change events
-        triggered = driver.execute_script(f"""
+        # ADVANCED INJECTION: Hijacks Google's Javascript object to force it to return the token to Angular
+        driver.execute_script(f"""
             var token = "{token}";
-            var foundCallback = false;
             
+            // 1. Fill standard HTML forms
             var elems = document.getElementsByName('g-recaptcha-response');
             for (var i = 0; i < elems.length; i++) {{
                 elems[i].innerHTML = token;
                 elems[i].value = token;
-                // Crucial for modern frameworks like Angular to detect the change
                 elems[i].dispatchEvent(new Event('input', {{ bubbles: true }}));
                 elems[i].dispatchEvent(new Event('change', {{ bubbles: true }}));
             }}
             
-            // 4. Try standard callbacks if they exist
+            // 2. Hijack grecaptcha object (Crucial for modern frameworks)
+            window.grecaptcha = window.grecaptcha || {{}};
+            window.grecaptcha.getResponse = function() {{ return token; }};
+            if (window.grecaptcha.enterprise) {{
+                window.grecaptcha.enterprise.getResponse = function() {{ return token; }};
+            }}
+            
+            // 3. Try to trigger callbacks directly
             var clients = window.___grecaptcha_cfg && window.___grecaptcha_cfg.clients;
             if (clients) {{
                 for (var cid in clients) {{
                     var client = clients[cid];
                     for (var key in client) {{
                         if (client[key] && typeof client[key].callback === 'function') {{
-                            client[key].callback(token);
-                            foundCallback = true;
+                            try {{ client[key].callback(token); }} catch(e) {{}}
                         }}
                     }}
                 }}
             }}
-            return foundCallback;
         """)
-        
-        if triggered:
-            log("Successfully fired reCAPTCHA callback with the solved token!")
-        else:
-            log("Could not find standard JS callback. Relying on Angular event trigger & manual submission click.")
-            
+        log("Successfully injected token and hijacked grecaptcha functions.")
         return True
     except Exception as e:
         log(f"Failed to inject token into the page: {e}")
@@ -362,9 +359,11 @@ def run_bot():
 
         if is_github: driver.save_screenshot("screenshot_02_filled.png")
 
+        # Robust Submit Button Locator
+        submit_xpath = "//edns-new-account//form//button[@type='submit']"
+        
         log("Clicking exact Create Account button...")
         try:
-            submit_xpath = '/html/body/edns-root/edns-layout/div/div/edns-side-panels/mat-sidenav-container/mat-sidenav-content/div/div[2]/edns-new-account/div/div/form/div[4]/button/span[2]'
             submit_btn = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.XPATH, submit_xpath)))
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", submit_btn)
             time.sleep(1)
@@ -381,7 +380,6 @@ def run_bot():
         solve_captcha_with_captchasolv(driver, CAPTCHASOLV_API_KEY)
         
         # After injecting the token, we click the Create Account button one more time 
-        # to submit the fully verified form to their server.
         log("Clicking Create Account button again to submit the verified form...")
         try:
             submit_btn = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, submit_xpath)))
@@ -393,12 +391,13 @@ def run_bot():
         if is_github: driver.save_screenshot("screenshot_04_final.png")
         
         url = driver.current_url
-        page = driver.page_source.lower()
-        success = any(x in page for x in ["welcome", "success", "verification", "dashboard"])
+        
+        # Corrected Success Verification: The URL will change away from the registration form when successful
+        success = "createNewAccount" not in url
         
         log("=" * 60)
-        log("SUCCESS!" if success else "UNCLEAR")
-        log(f"URL: {url}")
+        log("SUCCESS! Account created!" if success else "FAILED - URL did not change.")
+        log(f"Final URL: {url}")
         log("=" * 60)
         
         if is_github:
