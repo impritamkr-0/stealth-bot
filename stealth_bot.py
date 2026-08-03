@@ -14,7 +14,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium_stealth import stealth
 
 TARGET_URL = "https://eurodns.pxf.io/PzkDy6"
-CAPTCHASOLV_API_KEY = "b7d9b78d-2970-418c-9fb5-4302652b58ed"
+CAPTCHASOLV_API_KEY = "cs_VF8KfDcRjdn7xTq5F-zcjxMHfpadZMi2"
 
 def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
@@ -93,7 +93,6 @@ def solve_captcha_with_captchasolv(driver, api_key):
     
     url_solve = "https://v1.captchasolv.com/solve"
     
-    # ADDED HEADERS: Disguises the Python script as a real browser so CaptchaSolv doesn't block the request.
     headers = {
         "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
@@ -107,7 +106,8 @@ def solve_captcha_with_captchasolv(driver, api_key):
         payload = {
             "clientKey": api_key,
             "task": {
-                "type": "RecaptchaV2TaskProxyless",
+                # CHANGED to Invisible Task Type
+                "type": "RecaptchaV2InvisibleTaskProxyless",
                 "websiteURL": page_url,
                 "websiteKey": sitekey
             }
@@ -117,7 +117,6 @@ def solve_captcha_with_captchasolv(driver, api_key):
             log("Waiting for background solution (this may take up to 2 minutes)...")
             resp = requests.post(url_solve, json=payload, headers=headers, timeout=130)
             
-            # SAFE JSON PARSING: If the server returns a blank page, it catches it without crashing.
             try:
                 resp_json = resp.json()
             except Exception as json_err:
