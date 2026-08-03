@@ -13,7 +13,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium_stealth import stealth
 
 TARGET_URL = "https://eurodns.pxf.io/PzkDy6"
-NOPECHA_EXT_ID = "dknlfmjaanfblgfdfebhijalfmhmjjjo"
+BUSTER_EXT_ID = "mpbjkejclgoceaajmgiaoecpdmlomohb"
 
 def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
@@ -71,8 +71,8 @@ def smart_fill_field(driver, element, text):
     except:
         return False
 
-def solve_captcha_with_free_nopecha(driver, max_wait=60):
-    log("Checking for CAPTCHA image challenge popup...")
+def solve_captcha_with_buster(driver, max_wait=60):
+    log("Checking for CAPTCHA challenge popup...")
     start_time = time.time()
     is_github = os.environ.get('GITHUB_ACTIONS') == 'true'
     
@@ -91,40 +91,35 @@ def solve_captcha_with_free_nopecha(driver, max_wait=60):
                 time.sleep(2)
                 continue
 
-            log("Challenge popup detected!")
-            
-            # Save screenshot right when popup appears to debug if NopeCHA is visible
-            if is_github:
-                driver.save_screenshot("screenshot_captcha_popup_debug.png")
-
+            log("Challenge popup detected! Switching to frame...")
             driver.switch_to.frame(challenge_frame)
             time.sleep(2)
 
-            # Look for NopeCHA inside the iframe
-            clicked = False
-            try:
-                nopecha_btn = driver.find_element(By.XPATH, "//*[contains(@class, 'nopecha') or contains(@id, 'nopecha')]")
-                driver.execute_script("arguments[0].click();", nopecha_btn)
-                log("Clicked NopeCHA visual solver button inside iframe!")
-                clicked = True
-            except:
-                pass
+            if is_github:
+                driver.save_screenshot("screenshot_captcha_popup.png")
 
-            # If not inside, look for NopeCHA outside the iframe
-            if not clicked:
-                driver.switch_to.default_content()
-                try:
-                    nopecha_btn = driver.find_element(By.XPATH, "//*[contains(@class, 'nopecha') or contains(@id, 'nopecha')]")
-                    driver.execute_script("arguments[0].click();", nopecha_btn)
-                    log("Clicked NopeCHA visual solver button in main document!")
-                    clicked = True
-                except:
-                    log("WARNING: Could not find NopeCHA button! Extension may be blocked or requires login.")
-                driver.switch_to.frame(challenge_frame)
+            # 1. Click the 'Audio Challenge' headphones icon (this makes Buster active)
+            try:
+                audio_btn = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.ID, "recaptcha-audio-button")))
+                driver.execute_script("arguments[0].click();", audio_btn)
+                log("Clicked Audio Challenge button.")
+                time.sleep(2)
+            except Exception as e:
+                log("Could not find Audio Challenge button. It might already be in audio mode.")
+
+            # 2. Click Buster's specific solver button (usually a person icon with title "Solve with Buster")
+            try:
+                buster_btn = WebDriverWait(driver, 5).until(
+                    EC.presence_of_element_located((By.XPATH, "//*[@title='Solve with Buster' or contains(@class, 'help-button-holder') or @id='solver-button']"))
+                )
+                driver.execute_script("arguments[0].click();", buster_btn)
+                log("Clicked Buster Solver button! Waiting for AI to transcribe audio...")
+            except Exception as e:
+                log("Could not find Buster button!")
 
             driver.switch_to.default_content()
             
-            log("Waiting patiently for CAPTCHA to be cleared...")
+            # 3. Wait for Buster to solve it
             for _ in range(25):
                 time.sleep(2)
                 visible_challenges = [
@@ -132,7 +127,7 @@ def solve_captcha_with_free_nopecha(driver, max_wait=60):
                     if "bframe" in (f.get_attribute("src") or "") and f.is_displayed()
                 ]
                 if not visible_challenges:
-                    log("CAPTCHA cleared successfully!")
+                    log("CAPTCHA cleared successfully by Buster!")
                     return True
         except:
             driver.switch_to.default_content()
@@ -175,7 +170,7 @@ def create_proxy_auth_extension(proxy_str):
         return None
 
 def build_chrome_options():
-    nopecha_path = os.environ.get('NOPECHA_PATH', '/opt/nopecha')
+    buster_path = os.environ.get('BUSTER_PATH', '/opt/buster')
     proxy = os.environ.get('PROXY_URL')
     options = uc.ChromeOptions()
     options.add_argument("--no-sandbox")
@@ -194,8 +189,8 @@ def build_chrome_options():
             clean_proxy = proxy.replace("http://", "").replace("https://", "").strip()
             if clean_proxy.count(":") == 1: options.add_argument(f'--proxy-server=http://{clean_proxy}')
             
-    if os.path.exists(nopecha_path) and os.path.exists(f"{nopecha_path}/manifest.json"):
-        extensions_to_load.append(nopecha_path)
+    if os.path.exists(buster_path) and os.path.exists(f"{buster_path}/manifest.json"):
+        extensions_to_load.append(buster_path)
 
     if extensions_to_load:
         options.add_argument(f"--load-extension={','.join(extensions_to_load)}")
@@ -242,24 +237,19 @@ def run_bot():
     driver.implicitly_wait(5)
     
     try:
-        # WAKE UP AND ACTIVATE NOPECHA EXTENSION
-        log("Activating NopeCHA Extension (Simulating toolbar icon click)...")
+        log("Activating Buster Extension...")
         try:
-            driver.get(f"chrome-extension://{NOPECHA_EXT_ID}/popup.html")
+            driver.get(f"chrome-extension://{BUSTER_EXT_ID}/options.html")
             time.sleep(2)
-            driver.get("https://nopecha.com/setup")
-            time.sleep(3)
-            log("NopeCHA successfully initialized and activated.")
+            log("Buster successfully initialized.")
         except Exception as e:
-            log("Could not load NopeCHA popup. Proceeding anyway.")
+            log("Could not load Buster options. Proceeding anyway.")
 
-        # 1. Open URL & Handle Cloudflare
         log(f"Loading affiliate link: {TARGET_URL}")
         driver.get(TARGET_URL)
         wait_for_cloudflare_clear(driver, max_wait=30)
         time.sleep(3)
 
-        # 2. Accept Cookies
         log("Looking for Accept Cookies button...")
         try:
             cookie_btn = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.XPATH, '//*[@id="cookiescript_accept"]')))
@@ -271,7 +261,6 @@ def run_bot():
 
         if is_github: driver.save_screenshot("screenshot_01_loaded.png")
 
-        # 3. Click My Account
         log("Clicking 'My account'...")
         try:
             my_acc = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.XPATH, '//*[@id="account-item-logout"]')))
@@ -283,7 +272,6 @@ def run_bot():
         except Exception as e:
             log(f"Failed to click My Account: {e}")
 
-        # 4. Click New Account
         log("Clicking 'New account'...")
         try:
             new_acc = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.XPATH, '//*[@id="logout-user-section"]/a[2]')))
@@ -293,7 +281,6 @@ def run_bot():
         except Exception as e:
             log(f"Failed to click New Account: {e}")
 
-        # 5. Fill Form
         log("Filling Email and Password...")
         email_fields = driver.find_elements(By.XPATH, "//input[@type='email']")
         if email_fields:
@@ -306,7 +293,6 @@ def run_bot():
             if len(pass_fields) >= 2:
                 smart_fill_field(driver, pass_fields[1], password)
 
-        # 6. Click Small Checkbox
         log("Checking the newsletter/terms checkbox...")
         try:
             checkbox = driver.find_element(By.XPATH, '//*[@id="subscribe-newsletter-checkbox-input"]')
@@ -320,7 +306,6 @@ def run_bot():
 
         if is_github: driver.save_screenshot("screenshot_02_filled.png")
 
-        # 7. Click Create Account Button
         log("Clicking exact Create Account button...")
         try:
             submit_xpath = '/html/body/edns-root/edns-layout/div/div/edns-side-panels/mat-sidenav-container/mat-sidenav-content/div/div[2]/edns-new-account/div/div/form/div[4]/button/span[2]'
@@ -335,14 +320,12 @@ def run_bot():
         time.sleep(4)
         if is_github: driver.save_screenshot("screenshot_03_submitted.png")
 
-        # 8. Solve CAPTCHA
-        log("Waiting for and solving pop-up CAPTCHA challenge...")
-        solve_captcha_with_free_nopecha(driver, max_wait=60)
+        # Solve CAPTCHA using BUSTER
+        solve_captcha_with_buster(driver, max_wait=60)
         
         time.sleep(8)
         if is_github: driver.save_screenshot("screenshot_04_final.png")
         
-        # 9. Verify Success
         url = driver.current_url
         page = driver.page_source.lower()
         success = any(x in page for x in ["welcome", "success", "verification", "dashboard"]) or "create" not in url
