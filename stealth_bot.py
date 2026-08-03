@@ -14,8 +14,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium_stealth import stealth
 
 TARGET_URL = "https://eurodns.pxf.io/PzkDy6"
-# PASTE YOUR NEW CAPTSOLVER API KEY HERE:
-CAPSOLVER_API_KEY = "cs_VF8KfDcRjdn7xTq5F-zcjxMHfpadZMi2"
+CAPTCHASOLV_API_KEY = "b7d9b78d-2970-418c-9fb5-4302652b58ed"
 
 def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
@@ -73,7 +72,7 @@ def smart_fill_field(driver, element, text):
     except:
         return False
 
-def solve_captcha_with_capsolver(driver, api_key):
+def solve_captcha_with_captchasolv(driver, api_key):
     log("Looking for reCAPTCHA sitekey on the page...")
     sitekey = None
     iframes = driver.find_elements(By.TAG_NAME, "iframe")
@@ -90,75 +89,48 @@ def solve_captcha_with_capsolver(driver, api_key):
         return False
         
     page_url = driver.current_url
-    log(f"Found sitekey: {sitekey}. Submitting to CapSolver API...")
+    log(f"Found sitekey: {sitekey}. Submitting to CaptchaSolv API...")
     
-    # CORRECTED API ENDPOINTS
-    url_create = "https://api.capsolver.com/createTask"
-    url_result = "https://api.capsolver.com/getTaskResult"
+    # NEW CAPTCHASOLV SYNC ENDPOINT
+    url_solve = "https://v1.captchasolv.com/solve"
     
     token = None
     max_retries = 3
     
     for attempt in range(1, max_retries + 1):
-        log(f"--- CapSolver Attempt {attempt}/{max_retries} ---")
-        payload_create = {
+        log(f"--- CaptchaSolv Attempt {attempt}/{max_retries} ---")
+        payload = {
             "clientKey": api_key,
             "task": {
-                "type": "ReCaptchaV2TaskProxyless",
+                "type": "RecaptchaV2TaskProxyless",
                 "websiteURL": page_url,
                 "websiteKey": sitekey
             }
         }
         
         try:
-            # Create the task
-            resp = requests.post(url_create, json=payload_create, timeout=20).json()
-            if resp.get("errorId") != 0:
-                log(f"CapSolver Error (createTask): {resp}")
+            log("Waiting for background solution (this may take up to 2 minutes)...")
+            # The timeout is high because this endpoint waits until solved
+            resp = requests.post(url_solve, json=payload, timeout=130).json()
+            
+            if resp.get("errorId") == 0:
+                token = resp.get("solution", {}).get("token")
+                log("Solution received successfully!")
+                break
+            else:
+                log(f"CaptchaSolv Error: {resp}")
                 time.sleep(3)
                 continue
                 
-            task_id = resp.get("taskId")
-            log(f"CapSolver Task ID: {task_id}. Waiting for background solution...")
-            
-            payload_result = {
-                "clientKey": api_key,
-                "taskId": task_id
-            }
-            
-            solved = False
-            for _ in range(30): # Wait up to 2.5 minutes per attempt
-                time.sleep(5)
-                
-                try:
-                    res = requests.post(url_result, json=payload_result, timeout=20).json()
-                    status = res.get("status")
-                    
-                    if status == "ready":
-                        solution = res.get("solution", {})
-                        token = solution.get("gRecaptchaResponse") or solution.get("token")
-                        solved = True
-                        break
-                    elif res.get("errorId") != 0:
-                        log(f"CapSolver Task Error (getTaskResult): {res}")
-                        break 
-                        
-                except Exception as poll_e:
-                    log(f"Polling network timeout, waiting and checking again... ({poll_e})")
-                    continue
-                    
-            if solved and token:
-                break 
-                
         except Exception as e:
-            log(f"Network error communicating with CapSolver API on creation: {e}")
+            log(f"Network error communicating with CaptchaSolv API: {e}")
             time.sleep(3)
 
     if not token:
-        log("CapSolver failed to solve the captcha after maximum retries.")
+        log("CaptchaSolv failed to solve the captcha after maximum retries.")
         return False
         
-    log("Solution received! Injecting token directly into page...")
+    log("Injecting token directly into page...")
     
     try:
         # 3. Inject token into the hidden HTML textarea
@@ -369,9 +341,9 @@ def run_bot():
         time.sleep(4)
         if is_github: driver.save_screenshot("screenshot_03_submitted.png")
 
-        # Automatically resolve the CAPTCHA via CapSolver API
-        log("Initializing API-based CapSolver solver...")
-        solve_captcha_with_capsolver(driver, CAPSOLVER_API_KEY)
+        # Automatically resolve the CAPTCHA via CaptchaSolv API
+        log("Initializing API-based CaptchaSolv solver...")
+        solve_captcha_with_captchasolv(driver, CAPTCHASOLV_API_KEY)
         
         # After injecting the token, we click the Create Account button one more time 
         # to submit the fully verified form to their server.
