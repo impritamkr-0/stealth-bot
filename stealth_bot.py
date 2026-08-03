@@ -164,7 +164,6 @@ def solve_captcha_with_captchasolv(driver, api_key):
     log("Injecting token directly into page and overriding Angular grecaptcha object...")
     
     try:
-        # ADVANCED INJECTION: Hijacks Google's Javascript object to force it to return the token to Angular
         driver.execute_script(f"""
             var token = "{token}";
             
@@ -359,8 +358,8 @@ def run_bot():
 
         if is_github: driver.save_screenshot("screenshot_02_filled.png")
 
-        # Robust Submit Button Locator
-        submit_xpath = "//edns-new-account//form//button[@type='submit']"
+        # REVERTED: Using the exact absolute XPath that worked previously
+        submit_xpath = '/html/body/edns-root/edns-layout/div/div/edns-side-panels/mat-sidenav-container/mat-sidenav-content/div/div[2]/edns-new-account/div/div/form/div[4]/button'
         
         log("Clicking exact Create Account button...")
         try:
@@ -379,7 +378,6 @@ def run_bot():
         log("Initializing API-based CaptchaSolv solver...")
         solve_captcha_with_captchasolv(driver, CAPTCHASOLV_API_KEY)
         
-        # After injecting the token, we click the Create Account button one more time 
         log("Clicking Create Account button again to submit the verified form...")
         try:
             submit_btn = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, submit_xpath)))
@@ -391,8 +389,6 @@ def run_bot():
         if is_github: driver.save_screenshot("screenshot_04_final.png")
         
         url = driver.current_url
-        
-        # Corrected Success Verification: The URL will change away from the registration form when successful
         success = "createNewAccount" not in url
         
         log("=" * 60)
