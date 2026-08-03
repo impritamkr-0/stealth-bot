@@ -14,7 +14,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium_stealth import stealth
 
 TARGET_URL = "https://eurodns.pxf.io/PzkDy6"
-CAPTCHASOLV_API_KEY = "b7d9b78d-2970-418c-9fb5-4302652b58ed"
+CAPTCHASOLV_API_KEY = "cs_VF8KfDcRjdn7xTq5F-zcjxMHfpadZMi2"
 
 def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
@@ -91,11 +91,16 @@ def solve_captcha_with_captchasolv(driver, api_key):
     page_url = driver.current_url
     log(f"Found sitekey: {sitekey}. Submitting to CaptchaSolv API...")
     
-    # NEW CAPTCHASOLV SYNC ENDPOINT
     url_solve = "https://v1.captchasolv.com/solve"
     
+    # ADDED HEADERS: Disguises the Python script as a real browser so CaptchaSolv doesn't block the request.
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+    }
+    
     token = None
-    max_retries = 3
+    max_retries = 5
     
     for attempt in range(1, max_retries + 1):
         log(f"--- CaptchaSolv Attempt {attempt}/{max_retries} ---")
@@ -110,21 +115,33 @@ def solve_captcha_with_captchasolv(driver, api_key):
         
         try:
             log("Waiting for background solution (this may take up to 2 minutes)...")
-            # The timeout is high because this endpoint waits until solved
-            resp = requests.post(url_solve, json=payload, timeout=130).json()
+            resp = requests.post(url_solve, json=payload, headers=headers, timeout=130)
             
-            if resp.get("errorId") == 0:
-                token = resp.get("solution", {}).get("token")
+            # SAFE JSON PARSING: If the server returns a blank page, it catches it without crashing.
+            try:
+                resp_json = resp.json()
+            except Exception as json_err:
+                log(f"API Error: CaptchaSolv returned a blank/HTML page instead of JSON data.")
+                log(f"HTTP Status Code: {resp.status_code}")
+                log(f"Raw Server Response: {resp.text[:200]}")
+                time.sleep(5)
+                continue
+                
+            if resp_json.get("errorId") == 0:
+                token = resp_json.get("solution", {}).get("token")
                 log("Solution received successfully!")
                 break
             else:
-                log(f"CaptchaSolv Error: {resp}")
-                time.sleep(3)
+                log(f"CaptchaSolv Worker Error: {resp_json}")
+                time.sleep(5)
                 continue
                 
+        except requests.exceptions.ReadTimeout:
+            log("CaptchaSolv API connection timed out. Their servers took too long to respond.")
+            time.sleep(5)
         except Exception as e:
             log(f"Network error communicating with CaptchaSolv API: {e}")
-            time.sleep(3)
+            time.sleep(5)
 
     if not token:
         log("CaptchaSolv failed to solve the captcha after maximum retries.")
