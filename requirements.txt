@@ -1,5 +1,2 @@
-undetected-chromedriver
-selenium
-fake-useragent
-pyvirtualdisplay
+playwright
 requests
