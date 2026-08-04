@@ -3,31 +3,17 @@ import sys
 import time
 import random
 import string
-import tempfile
-import subprocess
-import re
 import requests
-import undetected_chromedriver as uc
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium_stealth import stealth
+from playwright.sync_api import sync_playwright
 
 TARGET_URL = "https://eurodns.pxf.io/PzkDy6"
-CAPTCHASOLV_API_KEY = "b7d9b78d-2970-418c-9fb5-4302652b58ed"
+
+# Retrieve API keys securely from GitHub Actions environment variables
+BB_API_KEY = os.environ.get("BROWSERBASE_API_KEY")
+BB_PROJECT_ID = os.environ.get("BROWSERBASE_PROJECT_ID")
 
 def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
-
-def get_chrome_major_version():
-    try:
-        output = subprocess.check_output(['google-chrome', '--version'], text=True)
-        version_str = output.strip().split()[-1]
-        major = int(version_str.split('.')[0])
-        log(f"Detected Chrome Version: {major}")
-        return major
-    except:
-        return 150
 
 def generate_random_email():
     domains = ["1secmail.com", "1secmail.net", "1secmail.org"]
@@ -43,371 +29,108 @@ def generate_strong_password():
     password = upper + lower + digit + special + remaining
     return ''.join(random.sample(password, len(password)))
 
-def wait_for_cloudflare_clear(driver, max_wait=30):
-    start_time = time.time()
-    while time.time() - start_time < max_wait:
-        if "just a moment" in driver.title.lower() or "cf-challenge" in driver.page_source.lower() or "turnstile" in driver.page_source.lower():
-            time.sleep(2)
-        else:
-            log("Cloudflare cleared.")
-            return True
-    return False
+def create_browserbase_session():
+    """Requests a cloud browser session with automated CAPTCHA solving enabled."""
+    if not BB_API_KEY or not BB_PROJECT_ID:
+        log("Error: BROWSERBASE_API_KEY or BROWSERBASE_PROJECT_ID environment variables missing.")
+        sys.exit(1)
 
-def fast_human_type(element, text):
-    element.clear()
-    for char in text:
-        element.send_keys(char)
-        time.sleep(random.uniform(0.01, 0.05))
-
-def smart_fill_field(driver, element, text):
-    try:
-        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
-        time.sleep(0.1)
-        fast_human_type(element, text)
-        time.sleep(0.1)
-        if element.get_attribute("value") != text:
-            driver.execute_script(f"arguments[0].value = '{text}';", element)
-            driver.execute_script("arguments[0].dispatchEvent(new Event('input', {bubbles: true}));", element)
-        return True
-    except:
-        return False
-
-def solve_captcha_with_captchasolv(driver, api_key):
-    log("Looking for reCAPTCHA sitekey on the page...")
-    sitekey = None
-    iframes = driver.find_elements(By.TAG_NAME, "iframe")
-    for iframe in iframes:
-        src = iframe.get_attribute("src") or ""
-        if "k=" in src and "recaptcha" in src:
-            match = re.search(r"[?&]k=([^&]+)", src)
-            if match:
-                sitekey = match.group(1)
-                break
-                
-    if not sitekey:
-        log("No CAPTCHA sitekey found. (Maybe it didn't load?)")
-        return False
-        
-    page_url = driver.current_url
-    log(f"Found sitekey: {sitekey}. Submitting to CaptchaSolv API...")
-    
-    url_create = "https://v1.captchasolv.com/createTask"
-    url_result = "https://v1.captchasolv.com/getTaskResult"
-    
+    log("Requesting a new Browserbase cloud session...")
+    url = "https://www.browserbase.com/v1/sessions"
     headers = {
-        "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+        "x-bb-api-key": BB_API_KEY,
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "projectId": BB_PROJECT_ID,
+        "browserSettings": {
+            "solveCaptchas": True  # Enables automated CAPTCHA solving
+        }
     }
     
-    token = None
-    max_retries = 3
-    
-    for attempt in range(1, max_retries + 1):
-        log(f"--- CaptchaSolv Attempt {attempt}/{max_retries} ---")
-        payload_create = {
-            "clientKey": api_key,
-            "task": {
-                "type": "RecaptchaV2InvisibleTaskProxyless",
-                "websiteURL": page_url,
-                "websiteKey": sitekey
-            }
-        }
+    response = requests.post(url, headers=headers, json=payload)
+    if response.status_code != 200:
+        log(f"Failed to create Browserbase session: {response.text}")
+        sys.exit(1)
         
-        try:
-            resp = requests.post(url_create, json=payload_create, headers=headers, timeout=15).json()
-            if resp.get("errorId") != 0:
-                log(f"CaptchaSolv Error (createTask): {resp}")
-                time.sleep(3)
-                continue
-                
-            task_id = resp.get("taskId")
-            log(f"CaptchaSolv Task ID: {task_id}. Waiting for background solution...")
-            
-            payload_result = {
-                "clientKey": api_key,
-                "taskId": task_id
-            }
-            
-            solved = False
-            for _ in range(40): 
-                time.sleep(5)
-                try:
-                    res = requests.post(url_result, json=payload_result, headers=headers, timeout=15).json()
-                    status = res.get("status")
-                    
-                    if status == "ready":
-                        token = res.get("solution", {}).get("token")
-                        solved = True
-                        log("Solution received successfully!")
-                        break
-                    elif status == "processing":
-                        continue
-                    elif res.get("errorId") != 0:
-                        log(f"CaptchaSolv Task Error (getTaskResult): {res}")
-                        break
-                        
-                except Exception as poll_e:
-                    log(f"Polling network timeout, waiting and checking again... ({poll_e})")
-                    continue
-                    
-            if solved and token:
-                break
-                
-        except Exception as e:
-            log(f"Network error communicating with CaptchaSolv API on creation: {e}")
-            time.sleep(3)
-
-    if not token:
-        log("CaptchaSolv failed to solve the captcha after maximum retries.")
-        return False
-        
-    log("Injecting token directly into page and overriding Angular grecaptcha object...")
-    
-    try:
-        driver.execute_script(f"""
-            var token = "{token}";
-            var elems = document.getElementsByName('g-recaptcha-response');
-            for (var i = 0; i < elems.length; i++) {{
-                elems[i].innerHTML = token;
-                elems[i].value = token;
-                elems[i].dispatchEvent(new Event('input', {{ bubbles: true }}));
-                elems[i].dispatchEvent(new Event('change', {{ bubbles: true }}));
-            }}
-            
-            window.grecaptcha = window.grecaptcha || {{}};
-            window.grecaptcha.getResponse = function() {{ return token; }};
-            if (window.grecaptcha.enterprise) {{
-                window.grecaptcha.enterprise.getResponse = function() {{ return token; }};
-            }}
-            
-            var clients = window.___grecaptcha_cfg && window.___grecaptcha_cfg.clients;
-            if (clients) {{
-                for (var cid in clients) {{
-                    var client = clients[cid];
-                    for (var key in client) {{
-                        if (client[key] && typeof client[key].callback === 'function') {{
-                            try {{ client[key].callback(token); }} catch(e) {{}}
-                        }}
-                    }}
-                }}
-            }}
-        """)
-        log("Successfully injected token and hijacked grecaptcha functions.")
-        return True
-    except Exception as e:
-        log(f"Failed to inject token into the page: {e}")
-        return False
-
-def create_proxy_auth_extension(proxy_str):
-    try:
-        clean_proxy = proxy_str.replace("http://", "").replace("https://", "").strip()
-        if "@" in clean_proxy:
-            auth, host_port = clean_proxy.split("@", 1)
-            user, password = auth.split(":", 1)
-            host, port = host_port.split(":", 1)
-        elif clean_proxy.count(":") == 3:
-            host, port, user, password = clean_proxy.split(":", 3)
-        else:
-            return None
-        
-        manifest_json = """
-        {
-            "version": "1.0.0", "manifest_version": 2, "name": "Chrome Proxy",
-            "permissions": ["proxy", "tabs", "unlimitedStorage", "storage", "<all_urls>", "webRequest", "webRequestBlocking"],
-            "background": {"scripts": ["background.js"]},
-            "minimum_chrome_version":"22.0.0"
-        }
-        """
-        background_js = f"""
-        var config = {{mode: "fixed_servers", rules: {{singleProxy: {{scheme: "http", host: "{host.strip()}", port: parseInt({port.strip()}) }}, bypassList: ["localhost"] }}}};
-        chrome.proxy.settings.set({{value: config, scope: "regular"}}, function() {{}});
-        function callbackFn(details) {{return {{authCredentials: {{username: "{user.strip()}", password: "{password.strip()}"}}}};}}
-        chrome.webRequest.onAuthRequired.addListener(callbackFn, {{urls: ["<all_urls>"]}}, ['blocking']);
-        """
-        ext_dir = tempfile.mkdtemp()
-        with open(os.path.join(ext_dir, "manifest.json"), "w") as f: f.write(manifest_json)
-        with open(os.path.join(ext_dir, "background.js"), "w") as f: f.write(background_js)
-        return ext_dir
-    except:
-        return None
-
-def build_chrome_options():
-    proxy = os.environ.get('PROXY_URL')
-    options = uc.ChromeOptions()
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--window-size=1920,1080")
-    options.add_argument("--disable-notifications")
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    
-    if proxy:
-        proxy_ext_dir = create_proxy_auth_extension(proxy)
-        if proxy_ext_dir:
-            options.add_argument(f"--load-extension={proxy_ext_dir}")
-        else:
-            clean_proxy = proxy.replace("http://", "").replace("https://", "").strip()
-            if clean_proxy.count(":") == 1: 
-                options.add_argument(f'--proxy-server=http://{clean_proxy}')
-
-    return options
-
-def launch_driver():
-    major_ver = get_chrome_major_version()
-    try:
-        return uc.Chrome(options=build_chrome_options(), version_main=major_ver)
-    except Exception as e:
-        match = re.search(r"Current browser version is (\d+)", str(e))
-        if match:
-            return uc.Chrome(options=build_chrome_options(), version_main=int(match.group(1)))
-        return None
+    session_id = response.json()["id"]
+    log(f"Browserbase Session created! ID: {session_id}")
+    return session_id
 
 def run_bot():
     log("=" * 60)
-    log("EURODNS BOT STARTING")
+    log("EURODNS BROWSERBASE BOT STARTING")
     log("=" * 60)
     
-    is_github = os.environ.get('GITHUB_ACTIONS') == 'true'
     email = generate_random_email()
     password = generate_strong_password()
     
     log(f"Email: {email}")
     log(f"Password: {'*' * len(password)} ({len(password)} chars)")
     
-    if is_github:
-        with open("account_credentials.txt", "w") as f:
-            f.write(f"Email: {email}\nPassword: {password}\n")
+    session_id = create_browserbase_session()
+    websocket_url = f"wss://connect.browserbase.com?apiKey={BB_API_KEY}&sessionId={session_id}"
     
-    driver = None
-    for attempt in range(3):
-        driver = launch_driver()
-        if driver: break
-        time.sleep(2)
-    
-    if not driver: sys.exit(1)
-    
-    try:
-        stealth(driver, languages=["en-US", "en"], vendor="Google Inc.", platform="Win32", webgl_vendor="Intel Inc.", renderer="Intel Iris OpenGL Engine", fix_hairline=True)
-    except: pass
-    
-    driver.implicitly_wait(5)
-    
-    try:
-        log(f"Loading affiliate link: {TARGET_URL}")
-        driver.get(TARGET_URL)
-        wait_for_cloudflare_clear(driver, max_wait=30)
-        time.sleep(3)
-
-        log("Looking for Accept Cookies button...")
-        try:
-            cookie_btn = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.XPATH, '//*[@id="cookiescript_accept"]')))
-            driver.execute_script("arguments[0].click();", cookie_btn)
-            log("Clicked Accept Cookies.")
-            time.sleep(random.uniform(2.0, 5.0))
-        except Exception as e:
-            log("Cookie button not found or already accepted.")
-
-        if is_github: driver.save_screenshot("screenshot_01_loaded.png")
-
-        log("Clicking 'My account'...")
-        try:
-            my_acc = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.XPATH, '//*[@id="account-item-logout"]')))
-            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", my_acc)
-            time.sleep(0.5)
-            driver.execute_script("arguments[0].click();", my_acc)
-            log("Clicked My Account.")
-            time.sleep(2)
-        except Exception as e:
-            log(f"Failed to click My Account: {e}")
-
-        log("Clicking 'New account'...")
-        try:
-            new_acc = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.XPATH, '//*[@id="logout-user-section"]/a[2]')))
-            driver.execute_script("arguments[0].click();", new_acc)
-            log("Clicked New Account. Waiting 5 seconds for form...")
-            time.sleep(5)
-        except Exception as e:
-            log(f"Failed to click New Account: {e}")
-
-        log("Filling Email and Password...")
-        email_fields = driver.find_elements(By.XPATH, "//input[@type='email']")
-        if email_fields:
-            smart_fill_field(driver, email_fields[0], email)
-        
-        pass_fields = driver.find_elements(By.XPATH, "//input[@type='password']")
-        if len(pass_fields) >= 1:
-            smart_fill_field(driver, pass_fields[0], password)
-            time.sleep(0.5)
-            if len(pass_fields) >= 2:
-                smart_fill_field(driver, pass_fields[1], password)
-
-        log("Checking the newsletter/terms checkbox...")
-        try:
-            checkbox = driver.find_element(By.XPATH, '//*[@id="subscribe-newsletter-checkbox-input"]')
-            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", checkbox)
-            time.sleep(0.5)
-            if not checkbox.is_selected():
-                driver.execute_script("arguments[0].click();", checkbox)
-                log("Checkbox checked.")
-        except Exception as e:
-            log("Checkbox not found or failed to click.")
-
-        if is_github: driver.save_screenshot("screenshot_02_filled.png")
-
-        submit_xpath = '/html/body/edns-root/edns-layout/div/div/edns-side-panels/mat-sidenav-container/mat-sidenav-content/div/div[2]/edns-new-account/div/div/form/div[4]/button'
-        
-        log("Clicking exact Create Account button...")
-        try:
-            submit_btn = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.XPATH, submit_xpath)))
-            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", submit_btn)
-            time.sleep(1)
-            driver.execute_script("arguments[0].click();", submit_btn)
-            log("Submit button clicked! Captcha should pop up now.")
-        except Exception as e:
-            log(f"Failed to click exact Submit Button. Error: {e}")
-
-        time.sleep(4)
-        if is_github: driver.save_screenshot("screenshot_03_submitted.png")
-
-        # Solve CAPTCHA via API
-        log("Initializing API-based CaptchaSolv solver...")
-        solve_captcha_with_captchasolv(driver, CAPTCHASOLV_API_KEY)
-        
-        log("Waiting 3 seconds for token processing, then clicking submit again...")
-        time.sleep(3)
+    with sync_playwright() as p:
+        log("Connecting Playwright to remote Browserbase browser...")
+        browser = p.chromium.connect_over_cdp(websocket_url)
+        context = browser.contexts[0]
+        page = context.pages[0]
         
         try:
-            submit_btn = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, submit_xpath)))
-            driver.execute_script("arguments[0].click();", submit_btn)
-            log("Final form submission clicked.")
-        except Exception as e:
-            log(f"Could not click submit second time: {e}")
+            log(f"Loading URL: {TARGET_URL}")
+            page.goto(TARGET_URL, timeout=60000)
+            
+            # 1. Accept Cookies
+            log("Looking for Accept Cookies button...")
+            try:
+                page.click('//*[@id="cookiescript_accept"]', timeout=5000)
+                log("Clicked Accept Cookies.")
+            except Exception:
+                log("Cookie button not found or already accepted.")
 
-        time.sleep(8)
-        if is_github: driver.save_screenshot("screenshot_04_final.png")
-        
-        url = driver.current_url
-        success = "createNewAccount" not in url
-        
-        log("=" * 60)
-        log("SUCCESS! Account created!" if success else "FAILED - Account creation did not finalize.")
-        log(f"Final URL: {url}")
-        log("=" * 60)
-        
-        if is_github:
-            with open("account_credentials.txt", "a") as f:
-                f.write(f"URL: {url}\nStatus: {'SUCCESS' if success else 'UNKNOWN'}\n")
-        
-    except Exception as e:
-        import traceback
-        log(traceback.format_exc())
-        if is_github: driver.save_screenshot("screenshot_error.png")
-        sys.exit(1)
-    finally:
-        log("Closing browser...")
-        try: driver.quit()
-        except: pass
-        log("Done")
+            # 2. Navigate to Registration
+            log("Navigating to Account Registration...")
+            page.click('//*[@id="account-item-logout"]')
+            page.click('//*[@id="logout-user-section"]/a[2]')
+            
+            page.wait_for_selector("input[type='email']", timeout=10000)
+            
+            # 3. Fill Form
+            log("Filling Email and Password...")
+            page.fill("input[type='email']", email)
+            passwords = page.locator("input[type='password']").all()
+            for pw_field in passwords:
+                pw_field.fill(password)
+                
+            # 4. Check Terms Checkbox
+            try:
+                page.check('//*[@id="subscribe-newsletter-checkbox-input"]')
+                log("Checked Terms/Newsletter checkbox.")
+            except Exception:
+                pass
+                
+            # 5. Submit Form
+            log("Clicking Create Account button...")
+            submit_xpath = '/html/body/edns-root/edns-layout/div/div/edns-side-panels/mat-sidenav-container/mat-sidenav-content/div/div[2]/edns-new-account/div/div/form/div[4]/button'
+            page.click(submit_xpath)
+            
+            log("Form submitted. Waiting for Browserbase CAPTCHA auto-solver and redirection...")
+            page.wait_for_url(lambda url: "createNewAccount" not in url, timeout=35000)
+            
+            success = "createNewAccount" not in page.url
+            log("=" * 60)
+            log("SUCCESS! Account created!" if success else "FAILED - Page URL did not change.")
+            log(f"Final URL: {page.url}")
+            log("=" * 60)
+            
+        except Exception as e:
+            log(f"An error occurred during execution: {e}")
+            
+        finally:
+            log("Closing cloud browser connection...")
+            browser.close()
+            log("Done.")
 
 if __name__ == "__main__":
     run_bot()
