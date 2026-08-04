@@ -29,7 +29,6 @@ def generate_strong_password():
     return ''.join(random.sample(password, len(password)))
 
 def create_browserbase_session():
-    """Requests a cloud browser session and returns the WebSocket connection URL."""
     if not BB_API_KEY or not BB_PROJECT_ID:
         log("Error: BROWSERBASE_API_KEY or BROWSERBASE_PROJECT_ID environment variables missing.")
         sys.exit(1)
@@ -48,21 +47,13 @@ def create_browserbase_session():
     }
     
     response = requests.post(url, headers=headers, json=payload)
-    
-    # Accept 200 (OK) or 201 (Created)
     if response.status_code not in [200, 201]:
-        log(f"Failed to create Browserbase session. Status: {response.status_code}. Response: {response.text}")
+        log(f"Failed to create Browserbase session: {response.text}")
         sys.exit(1)
         
     data = response.json()
-    session_id = data.get("id")
     connect_url = data.get("connectUrl")
-    
-    if not connect_url:
-        log("Error: Browserbase did not return a connectUrl.")
-        sys.exit(1)
-        
-    log(f"Browserbase Session created! ID: {session_id}")
+    log(f"Browserbase Session created! ID: {data.get('id')}")
     return connect_url
 
 def run_bot():
@@ -76,7 +67,6 @@ def run_bot():
     log(f"Email: {email}")
     log(f"Password: {'*' * len(password)} ({len(password)} chars)")
     
-    # Get the official connection URL directly from the API response
     websocket_url = create_browserbase_session()
     
     with sync_playwright() as p:
@@ -88,38 +78,63 @@ def run_bot():
             
             log(f"Loading URL: {TARGET_URL}")
             page.goto(TARGET_URL, timeout=60000)
+            page.wait_for_load_state("domcontentloaded")
             
+            # Step 1: Accept all cookies
             log("Looking for Accept Cookies button...")
             try:
-                page.click('//*[@id="cookiescript_accept"]', timeout=5000)
+                cookie_xpath = '//*[@id="cookiescript_accept"]'
+                page.locator(cookie_xpath).click(force=True, timeout=10000)
                 log("Clicked Accept Cookies.")
-            except Exception:
-                log("Cookie button not found or already accepted.")
+                # Wait for 2-5 seconds
+                time.sleep(random.uniform(2.0, 5.0))
+            except Exception as e:
+                log(f"Cookie button not found or skipped: {e}")
 
-            log("Navigating to Account Registration...")
-            page.click('//*[@id="account-item-logout"]')
-            page.click('//*[@id="logout-user-section"]/a[2]')
-            
-            page.wait_for_selector("input[type='email']", timeout=10000)
-            
+            # Step 2: Click My account button
+            log("Clicking 'My account' button...")
+            try:
+                my_acc_xpath = '//*[@id="account-item-logout"]'
+                page.locator(my_acc_xpath).click(force=True, timeout=10000)
+                log("Clicked My Account.")
+                time.sleep(2)
+            except Exception as e:
+                log(f"Failed to click My Account: {e}")
+
+            # Step 3: Click New account button & wait 5 seconds for email/password box
+            log("Clicking 'New account' button...")
+            try:
+                new_acc_xpath = '//*[@id="logout-user-section"]/a[2]'
+                page.locator(new_acc_xpath).click(force=True, timeout=10000)
+                log("Clicked New Account. Waiting 5 seconds for form...")
+                time.sleep(5)
+            except Exception as e:
+                log(f"Failed to click New Account: {e}")
+
+            # Fill Email and Password
             log("Filling Email and Password...")
-            page.fill("input[type='email']", email)
-            passwords = page.locator("input[type='password']").all()
+            page.fill("//input[@type='email']", email)
+            
+            passwords = page.locator("//input[@type='password']").all()
             for pw_field in passwords:
                 pw_field.fill(password)
                 
+            # Step 4: Click on small checkbox button
+            log("Checking terms/newsletter checkbox...")
             try:
-                page.check('//*[@id="subscribe-newsletter-checkbox-input"]')
-                log("Checked Terms/Newsletter checkbox.")
-            except Exception:
-                pass
+                checkbox_xpath = '//*[@id="subscribe-newsletter-checkbox-input"]'
+                page.locator(checkbox_xpath).check(force=True, timeout=5000)
+                log("Checkbox checked.")
+            except Exception as e:
+                log(f"Checkbox click failed or skipped: {e}")
                 
+            # Step 5: Click on exact create account button to open captcha solver and verifier
             log("Clicking Create Account button...")
-            submit_xpath = '/html/body/edns-root/edns-layout/div/div/edns-side-panels/mat-sidenav-container/mat-sidenav-content/div/div[2]/edns-new-account/div/div/form/div[4]/button'
-            page.click(submit_xpath)
+            submit_xpath = '/html/body/edns-root/edns-layout/div/div/edns-side-panels/mat-sidenav-container/mat-sidenav-content/div/div[2]/edns-new-account/div/div/form/div[4]/button/span[2]'
+            page.locator(submit_xpath).click(force=True)
             
-            log("Form submitted. Waiting for Browserbase CAPTCHA auto-solver and redirection...")
-            page.wait_for_url(lambda url: "createNewAccount" not in url, timeout=35000)
+            log("Form submitted! Waiting for Browserbase CAPTCHA auto-solver and redirection...")
+            page.wait_for_url(lambda url: "createNewAccount" not in url, timeout=40000)
             
             success = "createNewAccount" not in page.url
             log("=" * 60)
@@ -135,7 +150,7 @@ def run_bot():
             log("Closing cloud browser connection...")
             try:
                 browser.close()
-            except:
+            except Exception:
                 pass
             log("Done.")
 
