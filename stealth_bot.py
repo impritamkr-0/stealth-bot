@@ -86,7 +86,6 @@ def run_bot():
                 cookie_xpath = '//*[@id="cookiescript_accept"]'
                 page.locator(cookie_xpath).click(force=True, timeout=10000)
                 log("Clicked Accept Cookies.")
-                # Wait for 2-5 seconds
                 time.sleep(random.uniform(2.0, 5.0))
             except Exception as e:
                 log(f"Cookie button not found or skipped: {e}")
@@ -101,7 +100,7 @@ def run_bot():
             except Exception as e:
                 log(f"Failed to click My Account: {e}")
 
-            # Step 3: Click New account button & wait 5 seconds for email/password box
+            # Step 3: Click New account button & wait 5 seconds
             log("Clicking 'New account' button...")
             try:
                 new_acc_xpath = '//*[@id="logout-user-section"]/a[2]'
@@ -128,9 +127,10 @@ def run_bot():
             except Exception as e:
                 log(f"Checkbox click failed or skipped: {e}")
                 
-            # Step 5: Click on exact create account button to open captcha solver and verifier
+            # Step 5: Click on exact create account button
             log("Clicking Create Account button...")
-            submit_xpath = '/html/body/edns-root/edns-layout/div/div/edns-side-panels/mat-sidenav-container/mat-sidenav-content/div/div[2]/edns-new-account/div/div/form/div[4]/button/span[2]'
+            # ADDED 'xpath=' SO PLAYWRIGHT DOES NOT CRASH HERE!
+            submit_xpath = 'xpath=/html/body/edns-root/edns-layout/div/div/edns-side-panels/mat-sidenav-container/mat-sidenav-content/div/div[2]/edns-new-account/div/div/form/div[4]/button/span[2]'
             page.locator(submit_xpath).click(force=True)
             
             log("Form submitted! Waiting for Browserbase CAPTCHA auto-solver and redirection...")
