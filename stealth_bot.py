@@ -7,7 +7,6 @@ from playwright.sync_api import sync_playwright
 
 TARGET_URL = "https://eurodns.pxf.io/PzkDy6"
 
-# Retrieve API key securely from GitHub Actions
 BROWSERLESS_API_KEY = os.environ.get("BROWSERLESS_API_KEY")
 
 def log(msg):
@@ -42,69 +41,73 @@ def run_bot():
     log(f"Email: {email}")
     log(f"Password: {'*' * len(password)} ({len(password)} chars)")
     
-    # Direct connection to the Browserless Stealth path with built-in Captcha solver
     websocket_url = f"wss://production-sfo.browserless.io/stealth?token={BROWSERLESS_API_KEY}&solveCaptchas=true"
     
     with sync_playwright() as p:
         log("Connecting Playwright to remote Browserless.io browser...")
         try:
-            # We must reuse contexts[0] and pages[0] for Browserless features to hook correctly
             browser = p.chromium.connect_over_cdp(websocket_url)
             context = browser.contexts[0]
             page = context.pages[0]
+            
+            # FIX: Force a large desktop viewport so the navigation menu doesn't get hidden!
+            page.set_viewport_size({"width": 1920, "height": 1080})
             
             log(f"Loading URL: {TARGET_URL}")
             page.goto(TARGET_URL, timeout=60000)
             page.wait_for_load_state("domcontentloaded")
             
-            # Step 1: Accept all cookies
+            # 1. Accept all cookies button
             log("Looking for Accept Cookies button...")
             try:
-                cookie_xpath = '//*[@id="cookiescript_accept"]'
+                cookie_xpath = 'xpath=//*[@id="cookiescript_accept"]'
                 page.locator(cookie_xpath).click(force=True, timeout=10000)
                 log("Clicked Accept Cookies.")
+                
+                # Wait for 2-5 seconds
                 time.sleep(random.uniform(2.0, 5.0))
             except Exception as e:
                 log(f"Cookie button not found or skipped: {e}")
 
-            # Step 2: Click My account button
+            # 2. My account button
             log("Clicking 'My account' button...")
             try:
-                my_acc_xpath = '//*[@id="account-item-logout"]'
+                my_acc_xpath = 'xpath=//*[@id="account-item-logout"]'
                 page.locator(my_acc_xpath).click(force=True, timeout=10000)
                 log("Clicked My Account.")
-                time.sleep(2)
             except Exception as e:
                 log(f"Failed to click My Account: {e}")
 
-            # Step 3: Click New account button & wait 5 seconds
+            # 3. New account button
             log("Clicking 'New account' button...")
             try:
-                new_acc_xpath = '//*[@id="logout-user-section"]/a[2]'
+                new_acc_xpath = 'xpath=//*[@id="logout-user-section"]/a[2]'
                 page.locator(new_acc_xpath).click(force=True, timeout=10000)
-                log("Clicked New Account. Waiting 5 seconds for form...")
+                log("Clicked New Account.")
+                
+                # Wait for 5 seconds to open the email and password entry box
                 time.sleep(5)
             except Exception as e:
                 log(f"Failed to click New Account: {e}")
 
             # Fill Email and Password
             log("Filling Email and Password...")
-            page.fill("//input[@type='email']", email)
+            page.fill("xpath=//input[@type='email']", email)
             
-            passwords = page.locator("//input[@type='password']").all()
+            passwords = page.locator("xpath=//input[@type='password']").all()
             for pw_field in passwords:
                 pw_field.fill(password)
                 
-            # Step 4: Click on small checkbox button
+            # 4. Click on small checkbox button
             log("Checking terms/newsletter checkbox...")
             try:
-                checkbox_xpath = '//*[@id="subscribe-newsletter-checkbox-input"]'
+                checkbox_xpath = 'xpath=//*[@id="subscribe-newsletter-checkbox-input"]'
                 page.locator(checkbox_xpath).check(force=True, timeout=5000)
                 log("Checkbox checked.")
             except Exception as e:
                 log(f"Checkbox click failed or skipped: {e}")
                 
-            # Step 5: Click on exact create account button
+            # 5. Click on create account button to open captcha solver and verifier
             log("Clicking Create Account button...")
             submit_xpath = 'xpath=/html/body/edns-root/edns-layout/div/div/edns-side-panels/mat-sidenav-container/mat-sidenav-content/div/div[2]/edns-new-account/div/div/form/div[4]/button/span[2]'
             page.locator(submit_xpath).click(force=True)
