@@ -3,13 +3,12 @@ import sys
 import time
 import random
 import string
-import requests
 from playwright.sync_api import sync_playwright
 
 TARGET_URL = "https://eurodns.pxf.io/PzkDy6"
 
-BB_API_KEY = os.environ.get("BROWSERBASE_API_KEY")
-BB_PROJECT_ID = os.environ.get("BROWSERBASE_PROJECT_ID")
+# Retrieve API key securely from GitHub Actions
+BROWSERLESS_API_KEY = os.environ.get("BROWSERLESS_API_KEY")
 
 def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
@@ -28,37 +27,13 @@ def generate_strong_password():
     password = upper + lower + digit + special + remaining
     return ''.join(random.sample(password, len(password)))
 
-def create_browserbase_session():
-    if not BB_API_KEY or not BB_PROJECT_ID:
-        log("Error: BROWSERBASE_API_KEY or BROWSERBASE_PROJECT_ID environment variables missing.")
-        sys.exit(1)
-
-    log("Requesting a new Browserbase cloud session...")
-    url = "https://www.browserbase.com/v1/sessions"
-    headers = {
-        "x-bb-api-key": BB_API_KEY,
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "projectId": BB_PROJECT_ID,
-        "browserSettings": {
-            "solveCaptchas": True 
-        }
-    }
-    
-    response = requests.post(url, headers=headers, json=payload)
-    if response.status_code not in [200, 201]:
-        log(f"Failed to create Browserbase session: {response.text}")
-        sys.exit(1)
-        
-    data = response.json()
-    connect_url = data.get("connectUrl")
-    log(f"Browserbase Session created! ID: {data.get('id')}")
-    return connect_url
-
 def run_bot():
+    if not BROWSERLESS_API_KEY:
+        log("Error: BROWSERLESS_API_KEY environment variable missing.")
+        sys.exit(1)
+
     log("=" * 60)
-    log("EURODNS BROWSERBASE BOT STARTING")
+    log("EURODNS BROWSERLESS BOT STARTING")
     log("=" * 60)
     
     email = generate_random_email()
@@ -67,11 +42,13 @@ def run_bot():
     log(f"Email: {email}")
     log(f"Password: {'*' * len(password)} ({len(password)} chars)")
     
-    websocket_url = create_browserbase_session()
+    # Direct connection to the Browserless Stealth path with built-in Captcha solver
+    websocket_url = f"wss://production-sfo.browserless.io/stealth?token={BROWSERLESS_API_KEY}&solveCaptchas=true"
     
     with sync_playwright() as p:
-        log("Connecting Playwright to remote Browserbase browser...")
+        log("Connecting Playwright to remote Browserless.io browser...")
         try:
+            # We must reuse contexts[0] and pages[0] for Browserless features to hook correctly
             browser = p.chromium.connect_over_cdp(websocket_url)
             context = browser.contexts[0]
             page = context.pages[0]
@@ -129,11 +106,10 @@ def run_bot():
                 
             # Step 5: Click on exact create account button
             log("Clicking Create Account button...")
-            # ADDED 'xpath=' SO PLAYWRIGHT DOES NOT CRASH HERE!
             submit_xpath = 'xpath=/html/body/edns-root/edns-layout/div/div/edns-side-panels/mat-sidenav-container/mat-sidenav-content/div/div[2]/edns-new-account/div/div/form/div[4]/button/span[2]'
             page.locator(submit_xpath).click(force=True)
             
-            log("Form submitted! Waiting for Browserbase CAPTCHA auto-solver and redirection...")
+            log("Form submitted! Waiting for Browserless CAPTCHA auto-solver and redirection...")
             page.wait_for_url(lambda url: "createNewAccount" not in url, timeout=40000)
             
             success = "createNewAccount" not in page.url
